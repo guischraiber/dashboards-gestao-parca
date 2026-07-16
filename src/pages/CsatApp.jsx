@@ -55,65 +55,29 @@ function salvarSemanasTravadas(travadas) {
 
 function chaveWeek(ano, semana) { return `${ano}_W${semana}`; }
 
-// ── IndexedDB — CSVs importados (respostas + disparos) ─────────────────────
+// ── localStorage — CSVs importados (respostas + disparos) ──────────────────
 // Guarda os dados brutos importados para que, ao reabrir o dashboard ou trocar
 // de aba, os resultados continuem aparecendo sem precisar reimportar os arquivos.
-// Usa IndexedDB (em vez de localStorage) porque a base de Respostas costuma
-// vir com texto livre nos comentários e pode passar fácil dos ~5MB que o
-// localStorage aguenta — o que fazia a persistência falhar silenciosamente.
-const CSAT_DB_NAME = "csatParcaDB";
-const CSAT_STORE = "dadosImportados";
+const DADOS_IMPORTADOS_KEY = "csat_dados_importados";
 
-function abrirCsatDB() {
-  return new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) { reject(new Error("IndexedDB indisponível neste navegador")); return; }
-    const req = indexedDB.open(CSAT_DB_NAME, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(CSAT_STORE); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+function carregarDadosImportados() {
+  try {
+    const raw = localStorage.getItem(DADOS_IMPORTADOS_KEY);
+    return raw ? JSON.parse(raw) : null; // { respostas, disparos, arquivosInfo }
+  } catch { return null; }
 }
 
-async function carregarDadosImportados() {
+function salvarDadosImportados(respostas, disparos, arquivosInfo) {
   try {
-    const db = await abrirCsatDB();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(CSAT_STORE, "readonly");
-      const req = tx.objectStore(CSAT_STORE).get("atual");
-      req.onsuccess = () => resolve(req.result || null); // { respostas, disparos, arquivosInfo }
-      req.onerror = () => reject(req.error);
-    });
+    localStorage.setItem(DADOS_IMPORTADOS_KEY, JSON.stringify({ respostas, disparos, arquivosInfo }));
   } catch {
-    return null;
+    // Se estourar a cota do localStorage (arquivos muito grandes), apenas
+    // não persiste — o dashboard continua funcionando normalmente na sessão atual.
   }
 }
 
-async function salvarDadosImportados(respostas, disparos, arquivosInfo) {
-  try {
-    const db = await abrirCsatDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(CSAT_STORE, "readwrite");
-      tx.objectStore(CSAT_STORE).put({ respostas, disparos, arquivosInfo }, "atual");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return true;
-  } catch (e) {
-    console.warn("Não foi possível salvar os dados importados localmente:", e);
-    return false;
-  }
-}
-
-async function limparDadosImportados() {
-  try {
-    const db = await abrirCsatDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(CSAT_STORE, "readwrite");
-      tx.objectStore(CSAT_STORE).delete("atual");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
+function limparDadosImportados() {
+  try { localStorage.removeItem(DADOS_IMPORTADOS_KEY); } catch {}
 }
 
 // ── Parser principal ──────────────────────────────────────────────────────────
@@ -392,11 +356,6 @@ export default function CsatApp() {
   const [parceroFiltro, setParceroFiltro] = useState("Todos");
   const [modoSelecao, setModoSelecao] = useState("unico"); // "unico" | "consolidar" | "comparar"
   const [periodosMulti, setPeriodosMulti] = useState([]); // períodos selecionados no modo multi
-  const [avisoPersistencia, setAvisoPersistencia] = useState(false);
-  const [uploadHistory, setUploadHistory] = useState(() => {
-    try { const s = localStorage.getItem("csat_upload_hist"); return s ? JSON.parse(s) : []; } catch { return []; }
-  });
-  const [travadas, setTravadas] = useState(() => carregarSemanasTravadas());
 
   // Carregar dados da URL ao montar
   useEffect(() => {
@@ -446,19 +405,17 @@ export default function CsatApp() {
     }
 
     // Sem link na URL: tenta restaurar os últimos CSVs importados (respostas +
-    // disparos) que ficaram salvos no IndexedDB, igual ao que já acontece
+    // disparos) que ficaram salvos no localStorage, igual ao que já acontece
     // com o SLA e o Score.
-    (async () => {
-      const salvo = await carregarDadosImportados();
-      if (salvo && salvo.respostas && salvo.disparos) {
-        setRespostas(salvo.respostas);
-        setDisparos(salvo.disparos);
-        setArquivosInfo(salvo.arquivosInfo || { respostas: null, disparos: null });
-        respostasRef.current = salvo.respostas;
-        disparosRef.current = salvo.disparos;
-        calcular(salvo.respostas, salvo.disparos);
-      }
-    })();
+    const salvo = carregarDadosImportados();
+    if (salvo && salvo.respostas && salvo.disparos) {
+      setRespostas(salvo.respostas);
+      setDisparos(salvo.disparos);
+      setArquivosInfo(salvo.arquivosInfo || { respostas: null, disparos: null });
+      respostasRef.current = salvo.respostas;
+      disparosRef.current = salvo.disparos;
+      calcular(salvo.respostas, salvo.disparos);
+    }
   }, []);
 
   const respostasRef = useRef(null);
@@ -472,7 +429,6 @@ export default function CsatApp() {
       setPeriodoSel(result.semanas[result.semanas.length - 1] || null);
       setFromURL(false);
       window.history.replaceState({}, "", window.location.pathname);
-      setTravadas(carregarSemanasTravadas());
     }
   }, []);
 
@@ -482,23 +438,16 @@ export default function CsatApp() {
     const agora = new Date().toLocaleString("pt-BR");
     Papa.parse(file, { header: true, skipEmptyLines: true, complete: ({ data }) => {
       setter(data);
-      if (tipo === "respostas") respostasRef.current = data;
-      if (tipo === "disparos") disparosRef.current = data;
       setArquivosInfo(prev => {
         const novo = { ...prev, [tipo]: { nome: file.name, linhas: data.length, data: agora } };
+        if (tipo === "respostas") respostasRef.current = data;
+        if (tipo === "disparos") disparosRef.current = data;
+        // Só calcula e persiste quando os dois arquivos estiverem prontos
         if (respostasRef.current && disparosRef.current) {
           calcular(respostasRef.current, disparosRef.current);
-          salvarDadosImportados(respostasRef.current, disparosRef.current, novo).then(ok => {
-            setAvisoPersistencia(!ok);
-          });
+          salvarDadosImportados(respostasRef.current, disparosRef.current, novo);
         }
         return novo;
-      });
-      setUploadHistory(prev => {
-        const entry = { nome: file.name, data: agora, total: data.length, tipo };
-        const updated = [...prev, entry];
-        try { localStorage.setItem("csat_upload_hist", JSON.stringify(updated)); } catch {}
-        return updated;
       });
     }});
   }, [calcular]);
@@ -711,7 +660,6 @@ export default function CsatApp() {
       { id: "comentarios", label: "Comentários" },
     ];
     if (modoSelecao === "comparar") base.push({ id: "comparar", label: "⚡ Comparação" });
-    base.push({ id: "config", label: "⚙️ Configurações" });
     return base;
   }, [modoSelecao]);
 
@@ -769,11 +717,6 @@ export default function CsatApp() {
                   setParsed(null);
                 }
               }} style={{ marginLeft: 8, fontSize: 10, color: C.vermelho, background: "none", border: "none", cursor: "pointer", fontWeight: 700, padding: 0 }}>✕ limpar dados</button>
-            </span>
-          )}
-          {avisoPersistencia && (
-            <span style={{ fontSize: 11, color: C.amarelo, marginLeft: 4, fontWeight: 600 }}>
-              ⚠️ Não consegui salvar os dados neste navegador — na próxima vez que abrir, será preciso reimportar.
             </span>
           )}
           {(!respostas || !disparos) && !parsed && (
@@ -1437,100 +1380,6 @@ export default function CsatApp() {
                     </Card>
                   </>
                 )}
-              </div>
-            )}
-
-            {tab === "config" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {/* Cache de semanas travadas */}
-                {Object.keys(travadas).length > 0 && (
-                  <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>💾 Cache de Semanas</div>
-                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>
-                        Semanas salvas: <strong>
-                          {[...new Set(Object.keys(travadas).map(k => parseInt(k.split("_W")[1])).filter(n => !isNaN(n)))]
-                            .sort((a, b) => a - b)
-                            .map(n => `S${n}`)
-                            .join(", ")}
-                        </strong>
-                      </div>
-                    </div>
-                    <button onClick={() => {
-                      if (!window.confirm("Limpar cache de semanas travadas? Os dados serão recalculados no próximo CSV.")) return;
-                      localStorage.removeItem(STORAGE_KEY);
-                      setTravadas({});
-                      if (respostasRef.current && disparosRef.current) calcular(respostasRef.current, disparosRef.current);
-                    }} style={{ fontSize: 11, color: C.vermelho, background: C.vermelhoLight, border: `1px solid ${C.vermelho}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 600 }}>🗑️ Limpar cache</button>
-                  </div>
-                )}
-
-                {/* Dados importados atualmente (IndexedDB) */}
-                <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>📦 Dados Importados</div>
-                    <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>
-                      {respostas && disparos
-                        ? <>Respostas: <strong>{arquivosInfo.respostas?.nome || "—"}</strong> ({arquivosInfo.respostas?.linhas?.toLocaleString() || respostas.length} linhas) · Disparos: <strong>{arquivosInfo.disparos?.nome || "—"}</strong> ({arquivosInfo.disparos?.linhas?.toLocaleString() || disparos.length} linhas)</>
-                        : "Nenhum CSV importado ainda."}
-                    </div>
-                  </div>
-                  {respostas && disparos && (
-                    <button onClick={() => {
-                      if (!window.confirm("Apagar os dados importados salvos? Você vai precisar subir os CSVs de novo na próxima vez que abrir o dashboard.")) return;
-                      limparDadosImportados();
-                      setRespostas(null);
-                      setDisparos(null);
-                      respostasRef.current = null;
-                      disparosRef.current = null;
-                      setArquivosInfo({ respostas: null, disparos: null });
-                      setParsed(null);
-                    }} style={{ fontSize: 11, color: C.vermelho, background: C.vermelhoLight, border: `1px solid ${C.vermelho}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 600 }}>🗑️ Limpar dados</button>
-                  )}
-                </div>
-
-                {/* Histórico de uploads */}
-                <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.cinzaBorda}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>📂 Histórico de Uploads</div>
-                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>CSVs importados — salvo entre sessões.</div>
-                    </div>
-                    {uploadHistory.length > 0 && (
-                      <button onClick={() => {
-                        if (!window.confirm("Limpar histórico?")) return;
-                        try { localStorage.removeItem("csat_upload_hist"); } catch {}
-                        setUploadHistory([]);
-                      }} style={{ fontSize: 11, color: C.cinzaTexto, background: C.cinzaFundo, border: `1px solid ${C.cinzaBorda}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>🗑️ Limpar</button>
-                    )}
-                  </div>
-                  {uploadHistory.length === 0 ? (
-                    <div style={{ padding: 20, color: C.cinzaTexto, fontSize: 13, textAlign: "center" }}>Nenhum CSV importado ainda.</div>
-                  ) : (
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                        <thead>
-                          <tr style={{ background: C.cinzaFundo }}>
-                            {["#", "Arquivo", "Tipo", "Data / Hora", "Linhas"].map(h => (
-                              <th key={h} style={{ padding: "8px 14px", textAlign: h === "Arquivo" ? "left" : "center", fontSize: 11, fontWeight: 700, color: C.cinzaTexto, textTransform: "uppercase" }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[...uploadHistory].reverse().map((u, i) => (
-                            <tr key={i} style={{ borderTop: `1px solid ${C.cinzaBorda}`, background: i === 0 ? C.verdeLight : "transparent" }}>
-                              <td style={{ padding: "8px 14px", textAlign: "center", color: C.cinzaTexto }}>{uploadHistory.length - i}</td>
-                              <td style={{ padding: "8px 14px", fontWeight: 600 }}>{u.nome}</td>
-                              <td style={{ padding: "8px 14px", textAlign: "center", color: C.cinzaTexto }}>{u.tipo === "respostas" ? "Respostas" : "Disparos"}</td>
-                              <td style={{ padding: "8px 14px", textAlign: "center", color: C.cinzaTexto }}>{u.data}</td>
-                              <td style={{ padding: "8px 14px", textAlign: "center", color: C.cinzaTexto }}>{u.total?.toLocaleString()}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
               </div>
             )}
           </>
