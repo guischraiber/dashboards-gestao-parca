@@ -786,219 +786,199 @@ const AbaRelatorios = ({rawRows,weeklyMerged,pdMerged,monthlyData,parceirosDisp,
     </div>}
   </div>;
 };
-
 // ══════════════════════════════════════════════════════════════════════════════
-// Componente AbaCompararCSVs
+// Componente AbaFaturamentoColeta — análise de Coleta x Recebimento
+// Lê a base "Faturamentos Analítico" (Parceiro Nome, Data Coleta, Data de
+// Recebimento da Coleta, entre outras) e mostra em quantos dias úteis a coleta
+// foi recebida depois de realizada, com filtro por período e por parça.
 // ══════════════════════════════════════════════════════════════════════════════
-const AbaCompararCSVs = ({parseCSVFn, busdays_r, norm_r, PARC_CORES_R}) => {
-  const [csv1Rows, setCsv1Rows] = useState([]);
-  const [csv2Rows, setCsv2Rows] = useState([]);
-  const [csv1Nome, setCsv1Nome] = useState("");
-  const [csv2Nome, setCsv2Nome] = useState("");
-  const [loading,  setLoading]  = useState("");
+const AbaFaturamentoColeta = ({
+  parseCSVFn, busdays_r,
+  rows, setRows, nome, setNome,
+  periodoIni, setPeriodoIni, periodoFim, setPeriodoFim,
+  parceiroSel, setParceiroSel,
+  diasCorridos, setDiasCorridos,
+}) => {
+  const [loading, setLoading] = useState("");
 
-  const carregarCSV = (file, setCsv, setNome) => {
+  const carregar = (file) => {
     setLoading(file.name);
     const reader = new FileReader();
-    reader.onload = ev => { setCsv(parseCSVFn(ev.target.result)); setNome(file.name); setLoading(""); };
+    reader.onload = ev => { setRows(parseCSVFn(ev.target.result)); setNome(file.name); setLoading(""); };
     reader.readAsText(file);
   };
 
-  const diff = useMemo(() => {
-    if(!csv1Rows.length || !csv2Rows.length) return null;
-    const col1 = new Map(csv1Rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado"&&r["Pv"]).map(r=>[r["Pv"],r]));
-    const col2 = csv2Rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado"&&r["Pv"]);
-    const novos = col2.filter(r=>!col1.has(r["Pv"])).map(r=>({...r,diasAging:busdays_r(r["Data Solicitacao Date"],r["Data Coleta Efetivada Date"])}));
-    const crossMap = {};
-    novos.forEach(r=>{
-      const sol=parseInt(r["semana_solicitação"]),efe=parseInt(r["semana_Efetivada"]);
-      if(isNaN(sol)||isNaN(efe)||sol===efe) return; // ignorar mesma semana
-      const key=`S${sol}→S${efe}`;
-      if(!crossMap[key]) crossMap[key]={sol,efe,rows:[]};
-      crossMap[key].rows.push(r);
+  const paraISO = (dStr) => {
+    if(!dStr) return null;
+    const [d,m,y] = dStr.split("/");
+    if(!d||!m||!y) return null;
+    return `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
+  };
+
+  // Diferença em dias corridos (calendário) entre duas datas "DD/MM/AAAA".
+  // Calculado direto das datas (não usa nenhuma coluna pronta da planilha),
+  // então não sofre com valores de erro que às vezes aparecem em colunas
+  // pré-calculadas de origem quando a Data de Recebimento está vazia.
+  const diasCorridosEntre = (d1Str, d2Str) => {
+    if(!d1Str || !d2Str) return null;
+    const [d1d,d1m,d1y]=d1Str.split("/"); const dt1=new Date(d1y,d1m-1,d1d);
+    const [d2d,d2m,d2y]=d2Str.split("/"); const dt2=new Date(d2y,d2m-1,d2d);
+    if(isNaN(dt1)||isNaN(dt2)) return null;
+    return Math.round((dt2-dt1)/(1000*60*60*24));
+  };
+
+  const calcularDias = diasCorridos ? diasCorridosEntre : busdays_r;
+
+  const parceiros = useMemo(() =>
+    [...new Set(rows.map(r=>r["Parceiro Nome"]).filter(Boolean))].sort()
+  , [rows]);
+
+  const filtradas = useMemo(() => {
+    return rows.filter(r=>{
+      if(parceiroSel!=="Todos" && r["Parceiro Nome"]!==parceiroSel) return false;
+      if(periodoIni || periodoFim){
+        const iso = paraISO(r["Data Coleta"]);
+        if(!iso) return false;
+        if(periodoIni && iso<periodoIni) return false;
+        if(periodoFim && iso>periodoFim) return false;
+      }
+      return true;
     });
-    const porParceiro={};
-    novos.forEach(r=>{const p=r["Transportadora"]||"—";if(!porParceiro[p])porParceiro[p]={total:0,vencido:0};porParceiro[p].total++;if(norm_r(r["Vencido"])==="Sim")porParceiro[p].vencido++;});
-    return {novos, crossMap, porParceiro, totalCSV1:col1.size, totalCSV2:col2.length};
-  },[csv1Rows,csv2Rows]);
+  }, [rows, parceiroSel, periodoIni, periodoFim]);
 
-  const pill2=(on,cor=C.laranja)=>({padding:"4px 12px",borderRadius:999,border:`1.5px solid ${on?cor:C.cinzaBorda}`,background:on?`${cor}18`:"transparent",cursor:"pointer",fontSize:12,fontWeight:600,color:on?cor:C.cinzaTexto});
-  const sm2=(on,cor=C.laranja)=>({...pill2(on,cor),padding:"3px 8px",fontSize:11});
-  const escCSV=v=>{const s=String(v??"");return s.includes(";")||s.includes('"')?`"${s.replace(/"/g,'""')}"`:s;};
-  const dlCSV=(rows2,nome)=>{const csv=rows2.map(r=>r.map(escCSV).join(";")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}));a.download=`${nome}_${new Date().toISOString().slice(0,10)}.csv`;a.click();};
-  const faixaCor=d=>d>=25?"#7F1D1D":d>=20?C.vermelho:d>=15?C.roxo:d>=10?C.laranja:d>=5?C.amarelo:C.verde;
-  const faixaBg =d=>d>=25?"#FEE2E2":d>=20?C.vermelhoLight:d>=15?C.roxoLight:d>=10?"#FFF7ED":d>=5?C.amareloLight:C.verdeLight;
+  const analise = useMemo(() => {
+    const total = filtradas.length;
+    const semRecebimento = filtradas.filter(r=>!r["Data de Recebimento da Coleta"]).length;
+    const validas = filtradas
+      .filter(r=>r["Data Coleta"] && r["Data de Recebimento da Coleta"])
+      .map(r=>({...r, dias: calcularDias(r["Data Coleta"], r["Data de Recebimento da Coleta"])}))
+      .filter(r=>r.dias!==null && r.dias>=0);
 
-  // Filtro de semana de efetivação
-  const [crossSemSel, setCrossSemSel] = useState([]);
-  const semsEfet = useMemo(()=>diff?[...new Set(diff.novos.map(r=>parseInt(r["semana_Efetivada"])).filter(n=>!isNaN(n)))].sort((a,b)=>a-b):[],[diff]);
-  useEffect(()=>{ if(semsEfet.length>0) setCrossSemSel(semsEfet); },[semsEfet.join(",")]);
+    const n = validas.length;
+    const mesma = validas.filter(r=>r.dias===0).length;
+    const um    = validas.filter(r=>r.dias===1).length;
+    const dois  = validas.filter(r=>r.dias===2).length;
+    const tres  = validas.filter(r=>r.dias>=3).length;
 
-  // Filtro de parceiro para a tabela de cross semanas
-  const [crossParcSel, setCrossParcSel] = useState([]);
-  const parcsNovos = useMemo(()=>diff?[...new Set(diff.novos.map(r=>r["Transportadora"]).filter(Boolean))].sort():[],[diff]);
-  useEffect(()=>{ if(parcsNovos.length>0) setCrossParcSel(parcsNovos); },[parcsNovos.join(",")]);
-
-  const crossMapFiltrado = useMemo(()=>{
-    if(!diff) return {};
-    const novFilt = diff.novos.filter(r=>
-      (crossParcSel.length===0||crossParcSel.includes(r["Transportadora"])) &&
-      (crossSemSel.length===0||crossSemSel.includes(parseInt(r["semana_Efetivada"])))
-    );
-    const map = {};
-    novFilt.forEach(r=>{
-      const sol=parseInt(r["semana_solicitação"]),efe=parseInt(r["semana_Efetivada"]);
-      if(isNaN(sol)||isNaN(efe)||sol===efe) return; // ignorar mesma semana
-      const key=`S${sol}→S${efe}`;
-      if(!map[key]) map[key]={sol,efe,rows:[]};
-      map[key].rows.push(r);
+    // Quebra por parceiro (útil quando "Todos" está selecionado)
+    const porParceiro = {};
+    validas.forEach(r=>{
+      const p = r["Parceiro Nome"]||"—";
+      if(!porParceiro[p]) porParceiro[p] = {total:0, mesma:0, um:0, dois:0, tres:0};
+      porParceiro[p].total++;
+      if(r.dias===0) porParceiro[p].mesma++;
+      else if(r.dias===1) porParceiro[p].um++;
+      else if(r.dias===2) porParceiro[p].dois++;
+      else porParceiro[p].tres++;
     });
-    return map;
-  },[diff, crossParcSel, crossSemSel]);
 
-  return <div style={{display:"flex",flexDirection:"column",gap:14}}>
-    {/* Upload */}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-      {[["📁 CSV Anterior",csv1Nome,csv1Rows,f=>carregarCSV(f,setCsv1Rows,setCsv1Nome)],
-        ["📁 CSV Novo",csv2Nome,csv2Rows,f=>carregarCSV(f,setCsv2Rows,setCsv2Nome)]
-      ].map(([titulo,nome,rows,fn],i)=>(
-        <div key={i} style={{background:C.cinzaCard,border:`2px dashed ${nome?C.verde:C.cinzaBorda}`,borderRadius:12,padding:20,textAlign:"center"}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.cinzaTexto,marginBottom:12}}>{titulo}</div>
-          {nome?<div>
-            <div style={{fontSize:18,marginBottom:4}}>✅</div>
-            <div style={{fontWeight:700,fontSize:13,color:C.verde,marginBottom:4}}>{nome}</div>
-            <div style={{fontSize:11,color:C.cinzaTexto,marginBottom:8}}>{rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado").length} coletas</div>
-            <label style={{...pill2(false),cursor:"pointer",fontSize:11}}>
-              <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])fn(e.target.files[0]);e.target.value="";}}/>Trocar
-            </label>
-          </div>:<label style={{cursor:"pointer"}}>
-            <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])fn(e.target.files[0]);e.target.value="";}}/>
-            <div style={{fontSize:28,marginBottom:6}}>📂</div>
-            <div style={{fontSize:12,color:C.cinzaTexto}}>Clique para carregar</div>
-          </label>}
-        </div>
-      ))}
-    </div>
+    return {total, semRecebimento, n, mesma, um, dois, tres, porParceiro};
+  }, [filtradas, calcularDias]);
 
-    {loading&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:16,textAlign:"center",color:C.cinzaTexto}}>⏳ Processando {loading}...</div>}
+  const pct = (v,n) => n>0 ? `${(v/n*100).toFixed(2)}%` : "—";
+  const unidade = diasCorridos ? "dia corrido" : "dia útil";
+  const unidadePl = diasCorridos ? "dias corridos" : "dias úteis";
 
-    {!diff&&!loading&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:32,textAlign:"center",color:C.cinzaTexto}}>
-      <div style={{fontSize:28,marginBottom:8}}>🔄</div>
-      <div style={{fontWeight:700,fontSize:15,color:C.texto,marginBottom:6}}>Comparar dois CSVs</div>
-      <div style={{fontSize:13}}>Carregue o CSV anterior e o novo. O dashboard mostra os pedidos que apareceram como coletados no novo arquivo mas não estavam no anterior.</div>
-    </div>}
+  return (
+    <div style={{marginTop:28}}>
+      <div style={{fontWeight:700, fontSize:15, marginBottom:10}}>📦 Coleta x Recebimento ({unidadePl})</div>
 
-    {diff&&<>
-      {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12}}>
-        {[{l:"Coletados no anterior",v:diff.totalCSV1,c:C.cinzaTexto},{l:"Coletados no novo",v:diff.totalCSV2,c:C.azul},{l:"Novos coletados",v:diff.novos.length,c:C.verde},{l:"Novos fora do SLA",v:diff.novos.filter(r=>norm_r(r["Vencido"])==="Sim").length,c:C.vermelho}].map(({l,v,c},i)=>(
-          <div key={i} style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 18px",borderLeft:`4px solid ${c}`}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",marginBottom:4}}>{l}</div>
-            <div style={{fontSize:28,fontWeight:800,color:c,lineHeight:1}}>{v}</div>
-          </div>
-        ))}
+      <div style={{display:"flex", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:16}}>
+        <label style={{cursor:"pointer", padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
+          <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])carregar(e.target.files[0]);e.target.value="";}}/>
+          📂 Importar planilha (Faturamentos Analítico)
+        </label>
+        {nome && <span style={{fontSize:12, color:C.cinzaTexto}}>Arquivo: <strong>{nome}</strong> ({rows.length} linhas)</span>}
+        {loading && <span style={{fontSize:12, color:C.laranja}}>Processando {loading}...</span>}
       </div>
 
-      {/* Cross semana */}
-      <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-        <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.cinzaBorda}`}}>
-          <div style={{fontWeight:700,fontSize:13,marginBottom:10}}>
-            🔄 De qual semana vieram os novos coletados?
-            <span style={{fontSize:11,color:C.cinzaTexto,fontWeight:400,marginLeft:8}}>Semana de solicitação → semana de efetivação</span>
+      {rows.length>0 && <>
+        <div style={{display:"flex", gap:16, alignItems:"flex-end", flexWrap:"wrap", marginBottom:18, padding:14, background:C.cinzaFundo, borderRadius:10}}>
+          <div>
+            <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:4}}>Período (Data Coleta) — de</div>
+            <input type="date" value={periodoIni} onChange={e=>setPeriodoIni(e.target.value)}
+              style={{padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:13}}/>
           </div>
-          {/* Filtro semana efetivação */}
-          <div style={{marginBottom:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",letterSpacing:0.3}}>Semana de efetivação</div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>setCrossSemSel(semsEfet)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todas</button>
-                <button onClick={()=>setCrossSemSel([])} style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Nenhuma</button>
-              </div>
-            </div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-              {semsEfet.map(s=><button key={s} onClick={()=>setCrossSemSel(prev=>prev.includes(s)?prev.filter(x=>x!==s):[...prev,s])} style={sm2(crossSemSel.includes(s))}>S{s}</button>)}
-            </div>
+          <div>
+            <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:4}}>até</div>
+            <input type="date" value={periodoFim} onChange={e=>setPeriodoFim(e.target.value)}
+              style={{padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:13}}/>
           </div>
-          {/* Filtro parceiro */}
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",letterSpacing:0.3}}>Filtrar por parceiro</div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setCrossParcSel(parcsNovos)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todos</button>
-              <button onClick={()=>setCrossParcSel([])} style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Nenhum</button>
-            </div>
+          <div>
+            <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:4}}>Parça</div>
+            <select value={parceiroSel} onChange={e=>setParceiroSel(e.target.value)}
+              style={{padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
+              <option value="Todos">Todos</option>
+              {parceiros.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
           </div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-            {parcsNovos.map((p,i)=><button key={p} onClick={()=>setCrossParcSel(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])} style={sm2(crossParcSel.includes(p),PARC_CORES_R[i%PARC_CORES_R.length])}>{p.split(" ")[0]}</button>)}
-          </div>
+          {(periodoIni||periodoFim||parceiroSel!=="Todos") &&
+            <button onClick={()=>{setPeriodoIni("");setPeriodoFim("");setParceiroSel("Todos");}}
+              style={{padding:"6px 12px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto}}>
+              Limpar filtros
+            </button>}
+          <label title="Por padrão, a contagem usa dias úteis (desconta fins de semana e feriados nacionais). Marque para contar em dias corridos (calendário puro) em vez disso."
+            style={{display:"flex", alignItems:"center", gap:6, fontSize:12, color:C.cinzaTexto, cursor:"pointer", paddingBottom:6}}>
+            <input type="checkbox" checked={diasCorridos} onChange={e=>setDiasCorridos(e.target.checked)} />
+            Considerar dias corridos (em vez de dias úteis)
+          </label>
         </div>
-        <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-          <thead><tr style={{background:C.cinzaFundo}}>{["Solicitado em","Efetivado em","Coletas","Fora do SLA","SLA %"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:h==="Coletas"||h.includes("SLA")||h.includes("Fora")?"center":"left",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
-          <tbody>{Object.values(crossMapFiltrado).sort((a,b)=>a.sol!==b.sol?a.sol-b.sol:a.efe-b.efe).map(({sol,efe,rows},i)=>{
-            const venc=rows.filter(r=>norm_r(r["Vencido"])==="Sim").length;
-            const sla=Math.round((1-venc/rows.length)*100);
-            const cor=sla>=86?C.verde:sla>=80?C.amarelo:C.vermelho;
-            const bg=sla>=86?C.verdeLight:sla>=80?C.amareloLight:C.vermelhoLight;
-            return <tr key={i} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2===0?"transparent":C.cinzaFundo}}>
-              <td style={{padding:"8px 12px",fontWeight:700}}>S{sol}</td>
-              <td style={{padding:"8px 12px",color:C.azul,fontWeight:700}}>S{efe}</td>
-              <td style={{padding:"8px 12px",textAlign:"center",fontWeight:700}}>{rows.length}</td>
-              <td style={{padding:"8px 12px",textAlign:"center",color:venc>0?C.vermelho:C.cinzaTexto,fontWeight:venc>0?700:400}}>{venc}</td>
-              <td style={{padding:"8px 12px",textAlign:"center"}}><span style={{fontWeight:700,color:cor,background:bg,padding:"2px 8px",borderRadius:6}}>{sla}%</span></td>
-            </tr>;
-          })}</tbody>
-        </table></div>
-      </div>
 
-      {/* Por parceiro */}
-      <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-        <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.cinzaBorda}`,fontWeight:700,fontSize:13}}>Por Parceiro — Novos Coletados</div>
-        <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-          <thead><tr style={{background:C.cinzaFundo}}>{["Parceiro","Novos","Fora do SLA","SLA %"].map(h=><th key={h} style={{padding:"8px 12px",textAlign:h==="Parceiro"?"left":"center",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
-          <tbody>{Object.entries(diff.porParceiro).sort((a,b)=>b[1].total-a[1].total).map(([p,v],i)=>{
-            const sla=Math.round((1-v.vencido/v.total)*100);
-            const cor=sla>=86?C.verde:sla>=80?C.amarelo:C.vermelho;
-            const bg=sla>=86?C.verdeLight:sla>=80?C.amareloLight:C.vermelhoLight;
-            return <tr key={p} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2===0?"transparent":C.cinzaFundo}}>
-              <td style={{padding:"8px 12px",fontWeight:600,color:PARC_CORES_R[i%PARC_CORES_R.length]}}>{p}</td>
-              <td style={{padding:"8px 12px",textAlign:"center",fontWeight:700}}>{v.total}</td>
-              <td style={{padding:"8px 12px",textAlign:"center",color:v.vencido>0?C.vermelho:C.cinzaTexto,fontWeight:v.vencido>0?700:400}}>{v.vencido}</td>
-              <td style={{padding:"8px 12px",textAlign:"center"}}><span style={{fontWeight:700,color:cor,background:bg,padding:"2px 8px",borderRadius:6}}>{sla}%</span></td>
-            </tr>;
-          })}</tbody>
-        </table></div>
-      </div>
-
-      {/* Detalhe pedidos */}
-      <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-        <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontWeight:700,fontSize:13}}>Pedidos Novos — Detalhe ({diff.novos.length})</span>
-          <button onClick={()=>dlCSV([["Pedido","Parceiro","Cidade","UF","Sem. Sol.","Sem. Efet.","Aging (d.u.)","SLA","Data Solicitação","Data Coleta"],...diff.novos.map(r=>[r["Pv"]||"",r["Transportadora"]||"",r["Cidade"]||"",r["Estado"]||"",`S${r["semana_solicitação"]}`,`S${r["semana_Efetivada"]}`,r.diasAging??"",norm_r(r["Vencido"])==="Sim"?"Vencido":"OK",r["Data Solicitacao Date"]||"",r["Data Coleta Efetivada Date"]||""])],"novos_coletados")} style={{...pill2(false,C.azul),color:C.azul,fontSize:11}}>📥 CSV</button>
+        <div style={{fontSize:12, color:C.cinzaTexto, marginBottom:10}}>
+          {analise.total} linha(s) no filtro atual · {analise.semRecebimento} sem Data de Recebimento (excluídas) · {analise.n} válidas analisadas · contando em <strong>{unidadePl}</strong>
         </div>
-        <div style={{overflowX:"auto",maxHeight:440,overflowY:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-            <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:C.cinzaFundo}}>
-              {["Pedido","Parceiro","Cidade","UF","Sol.","Efet.","Aging","SLA","Solicitação","Coleta"].map(h=><th key={h} style={{padding:"7px 12px",textAlign:["Aging"].includes(h)?"center":"left",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
-            </tr></thead>
-            <tbody>{[...diff.novos].sort((a,b)=>(b.diasAging??0)-(a.diasAging??0)).map((r,i)=>{
-              const dias=r.diasAging??0; const venc=norm_r(r["Vencido"])==="Sim";
-              return <tr key={i} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2===0?"transparent":C.cinzaFundo}}>
-                <td style={{padding:"6px 12px",fontWeight:600,fontFamily:"monospace",fontSize:11}}>{r["Pv"]||"—"}</td>
-                <td style={{padding:"6px 12px",fontSize:11}}>{(r["Transportadora"]||"").split(" ")[0]}</td>
-                <td style={{padding:"6px 12px",color:C.cinzaTexto,fontSize:11}}>{r["Cidade"]||"—"}</td>
-                <td style={{padding:"6px 12px",color:C.cinzaTexto,fontSize:11}}>{r["Estado"]||"—"}</td>
-                <td style={{padding:"6px 12px",fontSize:11,fontWeight:600}}>S{r["semana_solicitação"]}</td>
-                <td style={{padding:"6px 12px",fontSize:11,color:C.azul,fontWeight:600}}>S{r["semana_Efetivada"]}</td>
-                <td style={{padding:"6px 12px",textAlign:"center"}}>{dias>0?<span style={{fontWeight:700,color:faixaCor(dias),background:faixaBg(dias),padding:"1px 7px",borderRadius:5,fontSize:11}}>{dias}d</span>:<span style={{color:C.cinzaTexto}}>—</span>}</td>
-                <td style={{padding:"6px 12px",fontSize:11}}>{venc?<span style={{background:C.vermelhoLight,color:C.vermelho,padding:"1px 7px",borderRadius:4,fontWeight:700,fontSize:10}}>Vencido</span>:<span style={{background:C.verdeLight,color:C.verde,padding:"1px 7px",borderRadius:4,fontWeight:700,fontSize:10}}>OK</span>}</td>
-                <td style={{padding:"6px 12px",color:C.cinzaTexto,fontSize:11}}>{r["Data Solicitacao Date"]||"—"}</td>
-                <td style={{padding:"6px 12px",color:C.cinzaTexto,fontSize:11}}>{r["Data Coleta Efetivada Date"]||"—"}</td>
-              </tr>;
-            })}</tbody>
+
+        <table style={{width:"100%", borderCollapse:"collapse", fontSize:13, marginBottom:22}}>
+          <thead>
+            <tr style={{background:C.cinzaFundo}}>
+              <th style={{textAlign:"left",  padding:"8px 12px"}}>Faixa</th>
+              <th style={{textAlign:"right", padding:"8px 12px"}}>Coletas</th>
+              <th style={{textAlign:"right", padding:"8px 12px"}}>%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style={{padding:"8px 12px"}}>Mesma data</td><td style={{textAlign:"right",padding:"8px 12px"}}>{analise.mesma}</td><td style={{textAlign:"right",padding:"8px 12px"}}>{pct(analise.mesma,analise.n)}</td></tr>
+            <tr><td style={{padding:"8px 12px"}}>Exatamente 1 {unidade}</td><td style={{textAlign:"right",padding:"8px 12px"}}>{analise.um}</td><td style={{textAlign:"right",padding:"8px 12px"}}>{pct(analise.um,analise.n)}</td></tr>
+            <tr><td style={{padding:"8px 12px"}}>Exatamente 2 {unidadePl}</td><td style={{textAlign:"right",padding:"8px 12px"}}>{analise.dois}</td><td style={{textAlign:"right",padding:"8px 12px"}}>{pct(analise.dois,analise.n)}</td></tr>
+            <tr><td style={{padding:"8px 12px"}}>3 {unidadePl} ou mais</td><td style={{textAlign:"right",padding:"8px 12px"}}>{analise.tres}</td><td style={{textAlign:"right",padding:"8px 12px"}}>{pct(analise.tres,analise.n)}</td></tr>
+            <tr style={{fontWeight:700, borderTop:`2px solid ${C.cinzaBorda}`}}>
+              <td style={{padding:"8px 12px"}}>Total</td><td style={{textAlign:"right",padding:"8px 12px"}}>{analise.n}</td><td style={{textAlign:"right",padding:"8px 12px"}}>100%</td>
+            </tr>
+          </tbody>
+        </table>
+
+        {parceiroSel==="Todos" && Object.keys(analise.porParceiro).length>1 && <>
+          <div style={{fontWeight:700, fontSize:14, marginBottom:8}}>Por parça</div>
+          <table style={{width:"100%", borderCollapse:"collapse", fontSize:12.5}}>
+            <thead>
+              <tr style={{background:C.cinzaFundo}}>
+                <th style={{textAlign:"left",  padding:"6px 10px"}}>Parça</th>
+                <th style={{textAlign:"right", padding:"6px 10px"}}>Total</th>
+                <th style={{textAlign:"right", padding:"6px 10px"}}>Mesma data</th>
+                <th style={{textAlign:"right", padding:"6px 10px"}}>1 {unidade}</th>
+                <th style={{textAlign:"right", padding:"6px 10px"}}>2 {unidadePl}</th>
+                <th style={{textAlign:"right", padding:"6px 10px"}}>3+ {unidadePl}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(analise.porParceiro)
+                .sort((a,b)=>b[1].total-a[1].total)
+                .map(([p,d])=>(
+                <tr key={p}>
+                  <td style={{padding:"6px 10px", fontWeight:600}}>{p}</td>
+                  <td style={{textAlign:"right",padding:"6px 10px"}}>{d.total}</td>
+                  <td style={{textAlign:"right",padding:"6px 10px"}}>{pct(d.mesma,d.total)}</td>
+                  <td style={{textAlign:"right",padding:"6px 10px"}}>{pct(d.um,d.total)}</td>
+                  <td style={{textAlign:"right",padding:"6px 10px"}}>{pct(d.dois,d.total)}</td>
+                  <td style={{textAlign:"right",padding:"6px 10px"}}>{pct(d.tres,d.total)}</td>
+                </tr>
+              ))}
+            </tbody>
           </table>
-        </div>
-      </div>
-    </>}
-  </div>;
+        </>}
+      </>}
+    </div>
+  );
 };
 
 export default function SlaApp() {
@@ -1014,6 +994,19 @@ export default function SlaApp() {
   const [csvStatus,   setCsvStatus]   = useState("idle"); // idle | processando | ok | erro
   const [csvNome,     setCsvNome]     = useState("");
   const [forcarUltimaSemana, setForcarUltimaSemana] = useState(false); // processa mesmo a semana "em aberto" (mais recente do CSV)
+
+  // Estado da aba "Comparar CSVs" — mantido aqui (no componente pai) para não se
+  // perder quando a pessoa troca de aba e volta (a aba em si é desmontada e
+  // remontada, então estado local dela sozinha seria zerado a cada troca).
+  // Estado da análise "Coleta x Recebimento" (dias úteis entre Data Coleta e
+  // Data de Recebimento da Coleta), mantido aqui (no componente pai) para não
+  // se perder quando a pessoa troca de aba e volta.
+  const [fatRows, setFatRows] = useState([]);
+  const [fatNome, setFatNome] = useState("");
+  const [fatPeriodoIni, setFatPeriodoIni] = useState("");
+  const [fatPeriodoFim, setFatPeriodoFim] = useState("");
+  const [fatParceiro, setFatParceiro] = useState("Todos");
+  const [fatDiasCorridos, setFatDiasCorridos] = useState(false); // false = dias úteis (padrão), true = dias corridos
   const [csvResumo,   setCsvResumo]   = useState({novas:[],retroativas:[],variacoes:[]});
 
   const [abaGlobal,   setAbaGlobal]   = useState("geral");
@@ -1403,7 +1396,7 @@ export default function SlaApp() {
 
     {/* ── ABAS PRINCIPAIS ── */}
     <div style={{background:"white",borderBottom:`1px solid ${C.cinzaBorda}`,padding:"0 24px",display:"flex",gap:4,overflowX:"auto"}}>
-      {[["geral","🏠 Visão Geral"],["parceiros","🔍 Por Parceiro"],["atrasos","⏰ Atrasos"],["problemas_tab","⚠️ Problemas"],["relatorios","📋 Relatórios"],["comparar","🔄 Comparar CSVs"],["simulacao","📈 Simulação"],["config","⚙️ Configurações"]].map(([k,l])=>(
+      {[["geral","🏠 Visão Geral"],["parceiros","🔍 Por Parceiro"],["atrasos","⏰ Atrasos"],["problemas_tab","⚠️ Problemas"],["relatorios","📋 Relatórios"],["comparar","📦 Coleta x Recebimento"],["simulacao","📈 Simulação"],["config","⚙️ Configurações"]].map(([k,l])=>(
         <button key={k} onClick={()=>setAbaGlobal(k)} style={{...hdr(l,abaGlobal===k),borderRadius:0,borderBottom:abaGlobal===k?`2px solid ${C.laranja}`:"2px solid transparent",padding:"12px 16px"}}>{l}</button>
       ))}
     </div>
@@ -1787,13 +1780,18 @@ export default function SlaApp() {
         :<AbaProblemas rawRows={rawRows} filtrarPorPeriodo={filtrarPorPeriodo} sel={sel} lbl={lbl}/>
       )}
       {/* ══ RELATÓRIOS ══ */}
-      {abaGlobal==="comparar"&&<AbaCompararCSVs
-        parseCSVFn={parseCSV}
-        busdays_r={busdays}
-        norm_r={norm}
-        PARC_CORES_R={PARC_CORES}
-        FAIXAS_AGING_R={FAIXAS_AGING}
-      />}
+      {abaGlobal==="comparar"&&
+        <AbaFaturamentoColeta
+          parseCSVFn={parseCSV}
+          busdays_r={busdays}
+          rows={fatRows} setRows={setFatRows}
+          nome={fatNome} setNome={setFatNome}
+          periodoIni={fatPeriodoIni} setPeriodoIni={setFatPeriodoIni}
+          periodoFim={fatPeriodoFim} setPeriodoFim={setFatPeriodoFim}
+          parceiroSel={fatParceiro} setParceiroSel={setFatParceiro}
+          diasCorridos={fatDiasCorridos} setDiasCorridos={setFatDiasCorridos}
+        />
+      }
 
       {abaGlobal==="relatorios"&&<AbaRelatorios
         rawRows={rawRows}
