@@ -1013,6 +1013,7 @@ export default function SlaApp() {
 
   const [csvStatus,   setCsvStatus]   = useState("idle"); // idle | processando | ok | erro
   const [csvNome,     setCsvNome]     = useState("");
+  const [forcarUltimaSemana, setForcarUltimaSemana] = useState(false); // processa mesmo a semana "em aberto" (mais recente do CSV)
   const [csvResumo,   setCsvResumo]   = useState({novas:[],retroativas:[],variacoes:[]});
 
   const [abaGlobal,   setAbaGlobal]   = useState("geral");
@@ -1193,7 +1194,7 @@ export default function SlaApp() {
   },[parceiros,granular,ALL_SEMANAS,ALL_MESES,semanasSel,mesesSel,getRaw,semFiltro,lbl]);
 
   // ── CSV Processing ─────────────────────────────────────────────────────────
-  const handleCSV = (file) => {
+  const handleCSV = (file, forcar=forcarUltimaSemana) => {
     setCsvStatus("processando"); setCsvNome(file.name);
     const reader=new FileReader();
     reader.onload=ev=>{
@@ -1205,7 +1206,11 @@ export default function SlaApp() {
         // Semanas válidas do CSV
         const coletado=rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
         const semanasRaw=[...new Set(coletado.map(r=>parseInt(r["semana_Efetivada"])).filter(n=>!isNaN(n)&&n>=1&&n<=53))].sort((a,b)=>a-b);
-        const semanasProc=semanasRaw.slice(0,-1); // ignorar última (em aberto)
+        // Por padrão ignora a última semana (assume "em aberto", ainda recebendo coletas).
+        // Se `forcar` estiver marcado, processa ela também — útil quando a exportação
+        // foi feita cedo na semana seguinte e a "última semana" do arquivo já está
+        // de fato fechada (sem nenhuma linha da semana posterior ainda).
+        const semanasProc = forcar ? semanasRaw : semanasRaw.slice(0,-1);
 
         if(!semanasProc.length){ setCsvStatus("ok"); return; }
 
@@ -1382,6 +1387,13 @@ export default function SlaApp() {
       <div style={{flex:1}}/>
 
       {/* Botões */}
+      <label
+        title="Por padrão, a semana mais recente de cada CSV é tratada como 'ainda em aberto' e não é processada. Marque esta opção se a exportação já reflete essa semana fechada (sem coletas de semanas posteriores no arquivo)."
+        style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.cinzaTexto,cursor:"pointer"}}
+      >
+        <input type="checkbox" checked={forcarUltimaSemana} onChange={e=>setForcarUltimaSemana(e.target.checked)} />
+        Processar semana em aberto
+      </label>
       <label style={{...pill(false),cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
         <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
         📂 Carregar CSV
