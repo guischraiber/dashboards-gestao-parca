@@ -386,6 +386,23 @@ async function decodeData(encoded) {
   } catch { return null; }
 }
 
+async function copiarLinkMascarado(url, label) {
+  try {
+    if (!navigator.clipboard || !window.ClipboardItem) throw new Error("sem suporte");
+    const htmlBlob = new Blob([`<a href="${url}">${label}</a>`], { type: "text/html" });
+    const textBlob = new Blob([`${label}: ${url}`], { type: "text/plain" });
+    await navigator.clipboard.write([new ClipboardItem({ "text/html": htmlBlob, "text/plain": textBlob })]);
+    return true;
+  } catch {
+    try {
+      await navigator.clipboard.writeText(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export default function CsatApp() {
   const [respostas, setRespostas] = useState(null);
   const [disparos, setDisparos] = useState(null);
@@ -559,13 +576,9 @@ export default function CsatApp() {
       setCopied(false);
       return;
     }
-    // Tentar copiar para clipboard
-    let copiou = false;
-    try {
-      await navigator.clipboard.writeText(url);
-      copiou = true;
-    } catch {
-      // Fallback: criar elemento temporário
+    // Tentar copiar para clipboard (mascarado quando possível)
+    let copiou = await copiarLinkMascarado(url, "Dashboard Gestão Parça — CSAT");
+    if (!copiou) {
       try {
         const el = document.createElement("textarea");
         el.value = url;
