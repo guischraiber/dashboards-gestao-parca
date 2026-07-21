@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell, Legend } from "recharts";
+import Papa from "papaparse";
 
 // ── Cores ─────────────────────────────────────────────────────────────────────
 const C = {
@@ -800,12 +801,33 @@ const AbaFaturamentoColeta = ({
   diasCorridos, setDiasCorridos,
 }) => {
   const [loading, setLoading] = useState("");
+  const [erroUpload, setErroUpload] = useState("");
 
+  // Usa o PapaParse (parser pronto, mais rápido e robusto que ler caractere a
+  // caractere) só para esta tela — reporta erro de verdade em vez de ficar
+  // preso em "Processando..." caso algo dê errado com o arquivo.
   const carregar = (file) => {
     setLoading(file.name);
-    const reader = new FileReader();
-    reader.onload = ev => { setRows(parseCSVFn(ev.target.result)); setNome(file.name); setLoading(""); };
-    reader.readAsText(file);
+    setErroUpload("");
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      worker: false,
+      transformHeader: h => (h || "").trim(),
+      transform: v => (v == null ? "" : String(v).trim()),
+      complete: (results) => {
+        if (results.errors && results.errors.length > 0) {
+          console.warn("Avisos ao ler CSV:", results.errors.slice(0, 5));
+        }
+        setRows(results.data);
+        setNome(file.name);
+        setLoading("");
+      },
+      error: (err) => {
+        setErroUpload(`Não consegui processar este arquivo: ${err?.message || err}`);
+        setLoading("");
+      },
+    });
   };
 
   const paraISO = (dStr) => {
@@ -890,6 +912,7 @@ const AbaFaturamentoColeta = ({
         </label>
         {nome && <span style={{fontSize:12, color:C.cinzaTexto}}>Arquivo: <strong>{nome}</strong> ({rows.length} linhas)</span>}
         {loading && <span style={{fontSize:12, color:C.laranja}}>Processando {loading}...</span>}
+        {erroUpload && <span style={{fontSize:12, color:C.vermelho, fontWeight:600}}>⚠️ {erroUpload}</span>}
       </div>
 
       {rows.length>0 && <>
