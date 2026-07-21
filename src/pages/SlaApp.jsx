@@ -104,6 +104,50 @@ async function limparRawRowsSalvo() {
   } catch {}
 }
 
+// Mesma ideia acima, mas para os dados da aba "Coleta x Recebimento" — reaproveita
+// o mesmo banco/store, só numa chave diferente ("coletaRecebimento").
+async function carregarFatRowsSalvo() {
+  try {
+    const db = await abrirSlaDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SLA_STORE, "readonly");
+      const req = tx.objectStore(SLA_STORE).get("coletaRecebimento");
+      req.onsuccess = () => resolve(req.result || null); // { rows, nome }
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function salvarFatRowsAtual(rows, nome) {
+  try {
+    const db = await abrirSlaDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(SLA_STORE, "readwrite");
+      tx.objectStore(SLA_STORE).put({ rows, nome }, "coletaRecebimento");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch (e) {
+    console.warn("Não foi possível salvar a planilha de Coleta x Recebimento localmente:", e);
+    return false;
+  }
+}
+
+async function limparFatRowsSalvo() {
+  try {
+    const db = await abrirSlaDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(SLA_STORE, "readwrite");
+      tx.objectStore(SLA_STORE).delete("coletaRecebimento");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {}
+}
+
 // ── CSV Parser ─────────────────────────────────────────────────────────────────
 const parseCSV = (text) => {
   const sep = text.split("\n")[0].includes(";") ? ";" : ",";
@@ -802,13 +846,12 @@ const AbaFaturamentoColeta = ({
 }) => {
   const [loading, setLoading] = useState("");
   const [erroUpload, setErroUpload] = useState("");
+  const [avisoPersistencia, setAvisoPersistencia] = useState(false);
 
-  // Usa o PapaParse (parser pronto, mais rápido e robusto que ler caractere a
-  // caractere) só para esta tela — reporta erro de verdade em vez de ficar
-  // preso em "Processando..." caso algo dê errado com o arquivo.
   const carregar = (file) => {
     setLoading(file.name);
     setErroUpload("");
+    setAvisoPersistencia(false);
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -822,12 +865,20 @@ const AbaFaturamentoColeta = ({
         setRows(results.data);
         setNome(file.name);
         setLoading("");
+        salvarFatRowsAtual(results.data, file.name).then(ok => setAvisoPersistencia(!ok));
       },
       error: (err) => {
         setErroUpload(`Não consegui processar este arquivo: ${err?.message || err}`);
         setLoading("");
       },
     });
+  };
+
+  const limparSalvo = () => {
+    if (!window.confirm("Remover esta planilha? Você vai precisar reimportar para ver os dados de novo.")) return;
+    limparFatRowsSalvo();
+    setRows([]);
+    setNome("");
   };
 
   const paraISO = (dStr) => {
@@ -903,7 +954,8 @@ const AbaFaturamentoColeta = ({
 
   return (
     <div style={{marginTop:28}}>
-      <div style={{fontWeight:700, fontSize:15, marginBottom:10}}>📦 Coleta x Recebimento ({unidadePl})</div>
+      <div style={{fontWeight:700, fontSize:15, marginBottom:2}}>📦 Coleta x Recebimento ({unidadePl})</div>
+      <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:10}}>A última planilha importada aqui fica salva neste navegador — não precisa reimportar toda vez que abrir a página.</div>
 
       <div style={{display:"flex", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:16}}>
         <label style={{cursor:"pointer", padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
@@ -911,6 +963,11 @@ const AbaFaturamentoColeta = ({
           📂 Importar planilha (Faturamentos Analítico)
         </label>
         {nome && <span style={{fontSize:12, color:C.cinzaTexto}}>Arquivo: <strong>{nome}</strong> ({rows.length} linhas)</span>}
+        {nome && <button onClick={limparSalvo}
+          style={{fontSize:11, color:C.cinzaTexto, background:"transparent", border:`1px solid ${C.cinzaBorda}`, borderRadius:6, padding:"4px 10px", cursor:"pointer"}}>
+          🗑️ Remover
+        </button>}
+        {avisoPersistencia && <span style={{fontSize:11, color:C.amarelo, fontWeight:600}}>⚠️ Não consegui salvar neste navegador — ao recarregar a página, será preciso reimportar.</span>}
         {loading && <span style={{fontSize:12, color:C.laranja}}>Processando {loading}...</span>}
         {erroUpload && <span style={{fontSize:12, color:C.vermelho, fontWeight:600}}>⚠️ {erroUpload}</span>}
       </div>
@@ -1055,6 +1112,18 @@ export default function SlaApp() {
         setRawRows(salvo.rows);
         setCsvNome(salvo.nome || "");
         setCsvStatus("ok");
+      }
+    })();
+  }, []);
+
+  // Restaurar a última planilha importada na aba "Coleta x Recebimento", igual
+  // já é feito para o CSV principal acima.
+  useEffect(() => {
+    (async () => {
+      const salvo = await carregarFatRowsSalvo();
+      if (salvo && salvo.rows && salvo.rows.length) {
+        setFatRows(salvo.rows);
+        setFatNome(salvo.nome || "");
       }
     })();
   }, []);
