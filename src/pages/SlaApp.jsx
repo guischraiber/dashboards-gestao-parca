@@ -1134,6 +1134,27 @@ async function decodeDataSla(encoded) {
   } catch { return null; }
 }
 
+// Copia um link "mascarado": em apps que aceitam texto formatado (Gmail, Word,
+// WhatsApp Web, Teams, Slack...) aparece só o texto bonito, clicável, escondendo
+// o link comprido por trás. Em lugares só-texto-puro, cai num formato
+// "Texto: link" pra nunca perder a funcionalidade.
+async function copiarLinkMascarado(url, label) {
+  try {
+    if (!navigator.clipboard || !window.ClipboardItem) throw new Error("sem suporte");
+    const htmlBlob = new Blob([`<a href="${url}">${label}</a>`], { type: "text/html" });
+    const textBlob = new Blob([`${label}: ${url}`], { type: "text/plain" });
+    await navigator.clipboard.write([new ClipboardItem({ "text/html": htmlBlob, "text/plain": textBlob })]);
+    return true;
+  } catch {
+    try {
+      await navigator.clipboard.writeText(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export default function SlaApp() {
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -1277,11 +1298,8 @@ export default function SlaApp() {
       setCopiedLink(false);
       return;
     }
-    let copiou = false;
-    try {
-      await navigator.clipboard.writeText(url);
-      copiou = true;
-    } catch {
+    let copiou = await copiarLinkMascarado(url, "Dashboard Gestão Parça — Performance Coleta");
+    if (!copiou) {
       try {
         const el = document.createElement("textarea");
         el.value = url;
