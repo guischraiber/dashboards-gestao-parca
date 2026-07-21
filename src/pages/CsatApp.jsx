@@ -353,7 +353,7 @@ function UploadZone({ label, icon, loaded, onFile }) {
 // ── App ───────────────────────────────────────────────────────────────────────
 // ── Encode/decode com compressão ────────────────────────────────────────────
 async function encodeData(data) {
-  const json = JSON.stringify(data);
+  const json = JSON.stringify(data, (_, v) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
   const bytes = new TextEncoder().encode(json);
   const cs = new CompressionStream("deflate");
   const writer = cs.writable.getWriter();
