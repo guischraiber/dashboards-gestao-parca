@@ -1061,12 +1061,47 @@ const AbaFaturamentoColeta = ({
   );
 };
 
+// ── Compartilhar link (comprime os dados calculados em vez do CSV bruto) ──────
+// Arredonda números pra reduzir o tamanho do link — poucas casas decimais não
+// fazem diferença visual, mas cortam bastante caractere do link comprimido.
+function arredondarParaLink(valor) {
+  if (typeof valor === "number") return Math.round(valor * 100) / 100;
+  return valor;
+}
+async function encodeDataSla(data) {
+  const json = JSON.stringify(data, (_, v) => arredondarParaLink(v));
+  const bytes = new TextEncoder().encode(json);
+  const cs = new CompressionStream("deflate");
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const compressed = await new Response(cs.readable).arrayBuffer();
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(compressed)));
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+async function decodeDataSla(encoded) {
+  try {
+    const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length).map((_, i) => binary.charCodeAt(i));
+    const ds = new DecompressionStream("deflate");
+    const writer = ds.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    const decompressed = await new Response(ds.readable).arrayBuffer();
+    return JSON.parse(new TextDecoder().decode(decompressed));
+  } catch { return null; }
+}
+
 export default function SlaApp() {
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [rawRows,        setRawRows]        = useState([]);
   const [weeklyExtra,    setWeeklyExtra]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_weekly");return s?JSON.parse(s):[];}catch{return [];} });
   const [pdExtra,        setPdExtra]        = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd");    return s?JSON.parse(s):{};}catch{return {};} });
+  const [copiedLink,     setCopiedLink]     = useState(false); // false | "loading" | "done" | "manual"
+  const [linkGerado,     setLinkGerado]     = useState(null);
+  const [fromURL,        setFromURL]        = useState(false);
   const [uploadHistory,  setUploadHistory]  = useState(()=>{ try{const s=localStorage.getItem("slaParca_hist"); return s?JSON.parse(s):[];}catch{return [];} });
   const [variacaoVol,    setVariacaoVol]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_var");  return s?JSON.parse(s):[];}catch{return [];} });
   const [avisoPersistenciaCSV, setAvisoPersistenciaCSV] = useState(false);
@@ -1127,6 +1162,73 @@ export default function SlaApp() {
       }
     })();
   }, []);
+
+  // Carregar dados de um link compartilhado (?d=...) — mescla com o que já
+  // está salvo neste navegador, igual ao CSAT.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const d = params.get("d");
+    if (!d) return;
+    decodeDataSla(d).then(decoded => {
+      if (!decoded) return;
+      if (Array.isArray(decoded.weeklyExtra) && decoded.weeklyExtra.length) {
+        setWeeklyExtra(prev => {
+          const porSemana = new Map(prev.map(w => [w.s, w]));
+          decoded.weeklyExtra.forEach(w => porSemana.set(w.s, w));
+          const merged = [...porSemana.values()].sort((a,b)=>a.s-b.s);
+          try { localStorage.setItem("slaParca_weekly", JSON.stringify(merged)); } catch {}
+          return merged;
+        });
+      }
+      if (decoded.pdExtra && typeof decoded.pdExtra === "object") {
+        setPdExtra(prev => {
+          const merged = { ...prev, ...decoded.pdExtra };
+          try { localStorage.setItem("slaParca_pd", JSON.stringify(merged)); } catch {}
+          return merged;
+        });
+      }
+      setFromURL(true);
+    });
+  }, []);
+
+  // Exportar link comprimido com as semanas já calculadas (não manda o CSV bruto)
+  const exportLinkSla = useCallback(async () => {
+    if (!weeklyExtra.length) return;
+    setCopiedLink("loading");
+    let url = null;
+    try {
+      const encoded = await encodeDataSla({ weeklyExtra, pdExtra });
+      url = `${window.location.origin}${window.location.pathname}?d=${encoded}`;
+      setLinkGerado(url);
+    } catch (e) {
+      console.error("Erro ao gerar link:", e);
+      setCopiedLink(false);
+      return;
+    }
+    let copiou = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copiou = true;
+    } catch {
+      try {
+        const el = document.createElement("textarea");
+        el.value = url;
+        el.style.position = "fixed";
+        el.style.opacity = "0";
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        copiou = document.execCommand("copy");
+        document.body.removeChild(el);
+      } catch { copiou = false; }
+    }
+    if (copiou) {
+      setCopiedLink("done");
+      setTimeout(() => setCopiedLink(false), 4000);
+    } else {
+      setCopiedLink("manual");
+    }
+  }, [weeklyExtra, pdExtra]);
   const [simAumentoVendas, setSimAumentoVendas] = useState(79);
   const [simSLAEsperado,   setSimSLAEsperado]   = useState(84);
 
@@ -1483,6 +1585,9 @@ export default function SlaApp() {
         <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
         📂 Carregar CSV
       </label>
+      {weeklyExtra.length>0 && <button onClick={exportLinkSla} disabled={copiedLink==="loading"} style={{...pill(copiedLink==="done"),cursor:copiedLink==="loading"?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5}}>
+        {copiedLink==="loading" ? "⏳ Gerando..." : copiedLink==="done" ? "✓ Link copiado!" : copiedLink==="manual" ? "📋 Copie o link abaixo" : "🔗 Compartilhar link"}
+      </button>}
       {(abaGlobal==="geral"||abaGlobal==="parceiros")&&<button onClick={exportarCSV} style={{...pill(false),display:"flex",alignItems:"center",gap:5,color:C.azul}}>📥 Exportar CSV</button>}
     </div>
 
@@ -1494,6 +1599,32 @@ export default function SlaApp() {
     </div>
 
     <div style={{maxWidth:1280,margin:"0 auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:16}}>
+
+      {fromURL && (
+        <div style={{padding:"10px 16px", background:"#DBEAFE", border:"1px solid #93C5FD", borderRadius:8, fontSize:13, color:"#1D4ED8", fontWeight:500}}>
+          📎 Dados carregados de um link compartilhado — mesclados com o que já estava salvo neste navegador.
+        </div>
+      )}
+
+      {linkGerado && copiedLink==="manual" && (
+        <div style={{padding:"12px 16px", background:C.cinzaCard, border:`1px solid ${C.laranja}`, borderRadius:8}}>
+          <p style={{fontSize:12, fontWeight:600, color:C.laranja, marginBottom:6}}>📋 Copie o link abaixo (Ctrl+A → Ctrl+C):</p>
+          <div style={{display:"flex", gap:8}}>
+            <input
+              readOnly
+              value={linkGerado}
+              onFocus={e => e.target.select()}
+              style={{flex:1, fontSize:12, padding:"6px 10px", border:`1px solid ${C.cinzaBorda}`, borderRadius:6, background:C.cinzaFundo, color:C.texto, fontFamily:"monospace"}}
+            />
+            <button onClick={() => { navigator.clipboard.writeText(linkGerado).then(() => { setCopiedLink("done"); setTimeout(() => { setCopiedLink(false); setLinkGerado(null); }, 2000); }); }} style={{padding:"6px 12px", background:C.laranja, color:"#fff", border:"none", borderRadius:6, cursor:"pointer", fontSize:12, fontWeight:600}}>
+              Copiar
+            </button>
+            <button onClick={() => { setCopiedLink(false); setLinkGerado(null); }} style={{padding:"6px 10px", background:C.cinzaBorda, color:C.cinzaTexto, border:"none", borderRadius:6, cursor:"pointer", fontSize:12}}>
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── FILTROS ── */}
       {abaGlobal!=="simulacao"&&abaGlobal!=="config"&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:16,display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
