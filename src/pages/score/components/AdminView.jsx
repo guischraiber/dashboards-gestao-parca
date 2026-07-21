@@ -12,6 +12,8 @@ export default function AdminView({ token }) {
   const [config, setConfig] = useState(null);
   const [historico, setHistorico] = useState([]);
   const [copiadoCodigo, setCopiadoCodigo] = useState(null);
+  const [copiadoAtual, setCopiadoAtual] = useState(false); // false | 'loading' | 'done' | 'manual'
+  const [linkAtualManual, setLinkAtualManual] = useState(null);
   const [aba, setAba] = useState('geral');
   const [cicloSelecionado, setCicloSelecionado] = useState(null);
   const [expandidos, setExpandidos] = useState(() => new Set());
@@ -77,6 +79,37 @@ export default function AdminView({ token }) {
       setCopiadoCodigo(codigo);
       setTimeout(() => setCopiadoCodigo(null), 1500);
     });
+  }
+
+  // Compartilha o link da própria visão interna (já é curto — só ?admin=TOKEN,
+  // não precisa de nenhuma compressão).
+  async function copiarLinkAtual() {
+    const url = window.location.href;
+    setCopiadoAtual('loading');
+    let copiou = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copiou = true;
+    } catch {
+      try {
+        const el = document.createElement('textarea');
+        el.value = url;
+        el.style.position = 'fixed';
+        el.style.opacity = '0';
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        copiou = document.execCommand('copy');
+        document.body.removeChild(el);
+      } catch { copiou = false; }
+    }
+    if (copiou) {
+      setCopiadoAtual('done');
+      setTimeout(() => setCopiadoAtual(false), 2500);
+    } else {
+      setLinkAtualManual(url);
+      setCopiadoAtual('manual');
+    }
   }
 
   if (estado === 'carregando') {
@@ -155,7 +188,30 @@ export default function AdminView({ token }) {
           <h1>Score Parça Reversa — Visão Interna</h1>
           <div className="subtitle">Ciclo: {cicloExibido} · {linhasAtuais.length} parceiros</div>
         </div>
+        <div style={{ marginLeft: 'auto' }}>
+          <button className="btn" onClick={copiarLinkAtual} disabled={copiadoAtual === 'loading'}>
+            {copiadoAtual === 'loading' ? '⏳ Gerando...' : copiadoAtual === 'done' ? '✓ Link copiado!' : copiadoAtual === 'manual' ? '📋 Copie o link abaixo' : '🔗 Compartilhar link'}
+          </button>
+        </div>
       </div>
+
+      {linkAtualManual && copiadoAtual === 'manual' && (
+        <div className="card" style={{ borderColor: 'var(--laranja)' }}>
+          <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--laranja)', marginBottom: 6 }}>📋 Copie o link abaixo (Ctrl+A → Ctrl+C):</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              readOnly
+              value={linkAtualManual}
+              onFocus={e => e.target.select()}
+              style={{ flex: 1, fontSize: 12, padding: '6px 10px', border: '1px solid var(--cinza-borda)', borderRadius: 6, background: 'var(--cinza-fundo)', fontFamily: 'monospace' }}
+            />
+            <button className="btn" onClick={() => { navigator.clipboard.writeText(linkAtualManual).then(() => { setCopiadoAtual('done'); setTimeout(() => { setCopiadoAtual(false); setLinkAtualManual(null); }, 2000); }); }}>
+              Copiar
+            </button>
+            <button className="btn btn-ghost" onClick={() => { setCopiadoAtual(false); setLinkAtualManual(null); }}>✕</button>
+          </div>
+        </div>
+      )}
 
       <div className="tabs">
         <button className={`tab-btn ${aba === 'geral' ? 'active' : ''}`} onClick={() => setAba('geral')}>
