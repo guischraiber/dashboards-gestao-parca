@@ -267,6 +267,16 @@ const Chip = ({v, m, inv, unit}) => {
 // ══════════════════════════════════════════════════════════════════════════════
 const AbaProblemas = ({rawRows, filtrarPorPeriodo, sel, lbl}) => {
   const [parcSel, setParcSel] = useState([]);
+  const [ocultarParc, setOcultarParc] = useState(() => {
+    try { return localStorage.getItem("dashParca_ocultarFiltroParceiros") === "1"; } catch { return false; }
+  });
+  const toggleOcultarParc = () => {
+    setOcultarParc(prev => {
+      const novo = !prev;
+      try { localStorage.setItem("dashParca_ocultarFiltroParceiros", novo ? "1" : "0"); } catch {}
+      return novo;
+    });
+  };
 
   const parcs = useMemo(()=>[...new Set(
     rawRows.filter(r=>r["Flag Situacao Coleta"]==="Coletado"&&(r["Problema_de_coleta"]==="1"||r["Problema_de_coleta"]===1))
@@ -304,11 +314,12 @@ const AbaProblemas = ({rawRows, filtrarPorPeriodo, sel, lbl}) => {
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>setParcSel(parcs)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todos</button>
           <button onClick={()=>setParcSel([])}    style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Nenhum</button>
+          <button onClick={toggleOcultarParc}     style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>{ocultarParc?"▼ Mostrar":"▲ Ocultar"}</button>
         </div>
       </div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+      {!ocultarParc&&<div style={{display:"flex",flexWrap:"wrap",gap:5}}>
         {parcs.map((p,i)=><button key={p} onClick={()=>setParcSel(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])} style={sm(parcSel.includes(p),PARC_CORES[i%PARC_CORES.length])}>{p.split(" ")[0]}</button>)}
-      </div>
+      </div>}
     </div>
 
     {/* KPIs */}
@@ -401,6 +412,16 @@ const AbaProblemas = ({rawRows, filtrarPorPeriodo, sel, lbl}) => {
 // ══════════════════════════════════════════════════════════════════════════════
 const AbaAtrasos = ({rawRows, filtrarPorPeriodo, sel, lbl}) => {
   const [parcSel, setParcSel] = useState([]);
+  const [ocultarParc, setOcultarParc] = useState(() => {
+    try { return localStorage.getItem("dashParca_ocultarFiltroParceiros") === "1"; } catch { return false; }
+  });
+  const toggleOcultarParc = () => {
+    setOcultarParc(prev => {
+      const novo = !prev;
+      try { localStorage.setItem("dashParca_ocultarFiltroParceiros", novo ? "1" : "0"); } catch {}
+      return novo;
+    });
+  };
 
   const parcs = useMemo(()=>[...new Set(
     rawRows.filter(r=>r["Transportadora"]).map(r=>r["Transportadora"]).filter(Boolean)
@@ -464,11 +485,12 @@ const AbaAtrasos = ({rawRows, filtrarPorPeriodo, sel, lbl}) => {
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>setParcSel(parcs)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todos</button>
           <button onClick={()=>setParcSel([])}    style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Nenhum</button>
+          <button onClick={toggleOcultarParc}     style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>{ocultarParc?"▼ Mostrar":"▲ Ocultar"}</button>
         </div>
       </div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+      {!ocultarParc&&<div style={{display:"flex",flexWrap:"wrap",gap:5}}>
         {parcs.map((p,i)=><button key={p} onClick={()=>setParcSel(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])} style={sm(parcSel.includes(p),PARC_CORES[i%PARC_CORES.length])}>{p.split(" ")[0]}</button>)}
-      </div>
+      </div>}
     </div>
 
     {/* KPIs por faixa */}
@@ -738,15 +760,26 @@ const AbaRelatorios = ({rawRows,weeklyMerged,pdMerged,monthlyData,parceirosDisp,
       <script>window.print();window.close();</script></body></html>`);
   };
 
+  const [ocultarParcRel, setOcultarParcRel] = useState(() => {
+    try { return localStorage.getItem("dashParca_ocultarFiltroParceiros") === "1"; } catch { return false; }
+  });
+  const toggleOcultarParcRel = () => {
+    setOcultarParcRel(prev => {
+      const novo = !prev;
+      try { localStorage.setItem("dashParca_ocultarFiltroParceiros", novo ? "1" : "0"); } catch {}
+      return novo;
+    });
+  };
   const sec=(t)=><div style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",letterSpacing:0.3,marginBottom:8,marginTop:14}}>{t}</div>;
   const parcChips=()=><>
-    <div style={{display:"flex",gap:6,marginBottom:6}}>
+    <div style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
       <button onClick={()=>setParcSel(parceirosDisp)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todos</button>
       <button onClick={()=>setParcSel([])} style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Nenhum</button>
+      <button onClick={toggleOcultarParcRel} style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>{ocultarParcRel?"▼ Mostrar":"▲ Ocultar"}</button>
     </div>
-    <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:14}}>
+    {!ocultarParcRel&&<div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:14}}>
       {parceirosDisp.map((p,i)=><button key={p} onClick={()=>setParcSel(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])} style={sm2(parcSel.includes(p),PARC_CORES_R[i%PARC_CORES_R.length])}>{p.split(" ")[0]}</button>)}
-    </div></>;
+    </div>}</>;
   const semChips=()=><>
     <div style={{display:"flex",gap:6,marginBottom:6}}>
       <button onClick={()=>setSemSel(todasSemanas)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todas</button>
@@ -1068,6 +1101,14 @@ function arredondarParaLink(valor) {
   if (typeof valor === "number") return Math.round(valor * 100) / 100;
   return valor;
 }
+function bytesParaBinaryString(bytes) {
+  let binary = "";
+  const CHUNK = 0x8000; // processa em blocos pra não estourar a pilha em arquivos grandes
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return binary;
+}
 async function encodeDataSla(data) {
   const json = JSON.stringify(data, (_, v) => arredondarParaLink(v));
   const bytes = new TextEncoder().encode(json);
@@ -1076,7 +1117,7 @@ async function encodeDataSla(data) {
   writer.write(bytes);
   writer.close();
   const compressed = await new Response(cs.readable).arrayBuffer();
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(compressed)));
+  const b64 = btoa(bytesParaBinaryString(new Uint8Array(compressed)));
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 async function decodeDataSla(encoded) {
@@ -1101,6 +1142,7 @@ export default function SlaApp() {
   const [pdExtra,        setPdExtra]        = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd");    return s?JSON.parse(s):{};}catch{return {};} });
   const [copiedLink,     setCopiedLink]     = useState(false); // false | "loading" | "done" | "manual"
   const [linkGerado,     setLinkGerado]     = useState(null);
+  const [linkAviso,      setLinkAviso]      = useState("");
   const [fromURL,        setFromURL]        = useState(false);
   const [uploadHistory,  setUploadHistory]  = useState(()=>{ try{const s=localStorage.getItem("slaParca_hist"); return s?JSON.parse(s):[];}catch{return [];} });
   const [variacaoVol,    setVariacaoVol]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_var");  return s?JSON.parse(s):[];}catch{return [];} });
@@ -1135,6 +1177,16 @@ export default function SlaApp() {
   const [trimestresSel,  setTrimestresSel]  = useState([]);
   const [indicSel,       setIndicSel]       = useState(INDICADORES.map(i=>i.key));
   const [parceiros,      setParceiros]      = useState([]);
+  const [ocultarFiltroParceiros, setOcultarFiltroParceiros] = useState(() => {
+    try { return localStorage.getItem("dashParca_ocultarFiltroParceiros") === "1"; } catch { return false; }
+  });
+  const toggleOcultarParceiros = () => {
+    setOcultarFiltroParceiros(prev => {
+      const novo = !prev;
+      try { localStorage.setItem("dashParca_ocultarFiltroParceiros", novo ? "1" : "0"); } catch {}
+      return novo;
+    });
+  };
   const [compA,          setCompA]          = useState(null);
   const [compB,          setCompB]          = useState(null);
 
@@ -1192,13 +1244,33 @@ export default function SlaApp() {
   }, []);
 
   // Exportar link comprimido com as semanas já calculadas (não manda o CSV bruto)
+  const LINK_MAX_CHARS = 11999;
+
   const exportLinkSla = useCallback(async () => {
     if (!weeklyExtra.length) return;
     setCopiedLink("loading");
+    setLinkAviso("");
     let url = null;
     try {
-      const encoded = await encodeDataSla({ weeklyExtra, pdExtra });
-      url = `${window.location.origin}${window.location.pathname}?d=${encoded}`;
+      // Tenta com todas as semanas salvas; se passar do limite, vai tirando as
+      // mais antigas (mantendo as mais recentes) até caber.
+      let candidato = [...weeklyExtra].sort((a,b)=>b.s-a.s);
+      let testUrl = "";
+      while (candidato.length > 0) {
+        const encoded = await encodeDataSla({ weeklyExtra: candidato, pdExtra });
+        testUrl = `${window.location.origin}${window.location.pathname}?d=${encoded}`;
+        if (testUrl.length <= LINK_MAX_CHARS) break;
+        candidato = candidato.slice(0, -1);
+      }
+      if (candidato.length === 0 || testUrl.length > LINK_MAX_CHARS) {
+        setCopiedLink(false);
+        setLinkAviso(`Não foi possível gerar um link dentro do limite de ${LINK_MAX_CHARS.toLocaleString("pt-BR")} caracteres.`);
+        return;
+      }
+      if (candidato.length < weeklyExtra.length) {
+        setLinkAviso(`O link com todas as ${weeklyExtra.length} semanas salvas ficaria acima do limite de ${LINK_MAX_CHARS.toLocaleString("pt-BR")} caracteres — incluí só as ${candidato.length} mais recentes.`);
+      }
+      url = testUrl;
       setLinkGerado(url);
     } catch (e) {
       console.error("Erro ao gerar link:", e);
@@ -1606,6 +1678,12 @@ export default function SlaApp() {
         </div>
       )}
 
+      {linkAviso && (
+        <div style={{padding:"10px 16px", background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, fontSize:13, color:"#92400E", fontWeight:500}}>
+          ⚠️ {linkAviso}
+        </div>
+      )}
+
       {linkGerado && copiedLink==="manual" && (
         <div style={{padding:"12px 16px", background:C.cinzaCard, border:`1px solid ${C.laranja}`, borderRadius:8}}>
           <p style={{fontSize:12, fontWeight:600, color:C.laranja, marginBottom:6}}>📋 Copie o link abaixo (Ctrl+A → Ctrl+C):</p>
@@ -1627,7 +1705,7 @@ export default function SlaApp() {
       )}
 
       {/* ── FILTROS ── */}
-      {abaGlobal!=="simulacao"&&abaGlobal!=="config"&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:16,display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
+      {abaGlobal!=="simulacao"&&abaGlobal!=="config"&&abaGlobal!=="comparar"&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:16,display:"flex",gap:24,flexWrap:"wrap",alignItems:"flex-start"}}>
 
         {/* Período */}
         <div style={{minWidth:280}}>
@@ -1696,14 +1774,15 @@ export default function SlaApp() {
         {abaGlobal==="parceiros"&&<div style={{flex:1,minWidth:200}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",letterSpacing:0.3}}>Parceiros</div>
-            <div style={{display:"flex",gap:8}}>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <button onClick={()=>setParceiros(PARCEIROS)} style={{fontSize:11,color:C.azul,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Todos</button>
               <button onClick={()=>setParceiros([])} style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>Nenhum</button>
+              <button onClick={toggleOcultarParceiros} style={{fontSize:11,color:C.cinzaTexto,cursor:"pointer",background:"none",border:"none",fontWeight:600}}>{ocultarFiltroParceiros?"▼ Mostrar":"▲ Ocultar"}</button>
             </div>
           </div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+          {!ocultarFiltroParceiros&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>
             {PARCEIROS.map((p,i)=><button key={p} onClick={()=>setParceiros(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])} style={sm(parceiros.includes(p),PARC_CORES[i%PARC_CORES.length])}>{p.split(" ")[0]}</button>)}
-          </div>
+          </div>}
         </div>}
       </div>}
 
