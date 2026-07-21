@@ -352,6 +352,14 @@ function UploadZone({ label, icon, loaded, onFile }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 // ── Encode/decode com compressão ────────────────────────────────────────────
+function bytesParaBinaryString(bytes) {
+  let binary = "";
+  const CHUNK = 0x8000; // processa em blocos pra não estourar a pilha em arquivos grandes
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return binary;
+}
 async function encodeData(data) {
   const json = JSON.stringify(data, (_, v) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
   const bytes = new TextEncoder().encode(json);
@@ -360,7 +368,7 @@ async function encodeData(data) {
   writer.write(bytes);
   writer.close();
   const compressed = await new Response(cs.readable).arrayBuffer();
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(compressed)));
+  const b64 = btoa(bytesParaBinaryString(new Uint8Array(compressed)));
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
@@ -388,8 +396,12 @@ export default function CsatApp() {
   const [periodoSel, setPeriodoSel] = useState(null);
   const [copied, setCopied] = useState(false);
   const [linkGerado, setLinkGerado] = useState(null);
+  const [linkAviso, setLinkAviso] = useState("");
   const [fromURL, setFromURL] = useState(false);
   const [parceroFiltro, setParceroFiltro] = useState("Todos");
+  const [ocultarFiltroParceiro, setOcultarFiltroParceiro] = useState(() => {
+    try { return localStorage.getItem("dashParca_ocultarFiltroParceiros") === "1"; } catch { return false; }
+  });
   const [modoSelecao, setModoSelecao] = useState("unico"); // "unico" | "consolidar" | "comparar"
   const [periodosMulti, setPeriodosMulti] = useState([]); // períodos selecionados no modo multi
   const [avisoPersistencia, setAvisoPersistencia] = useState(false);
@@ -506,21 +518,41 @@ export default function CsatApp() {
   const onRespostas = loadCSV(setRespostas, "respostas");
   const onDisparos = loadCSV(setDisparos, "disparos");
 
+  const LINK_MAX_CHARS = 11999;
+
   // Exportar link comprimido — inclui todas as semanas travadas
   const exportLink = useCallback(async () => {
     if (!parsed) return;
     setCopied("loading");
+    setLinkAviso("");
     let url = null;
     try {
-      const slim = {
-        semanas: parsed.semanas,
-        meses: parsed.meses,
-        anoAtual: parsed.anoAtual || new Date().getFullYear(),
-        porSemana: parsed.porSemana.map(p => p.slim || p),
-        porMes: parsed.porMes.map(p => p.slim || p),
-      };
-      const encoded = await encodeData(slim);
-      url = `${window.location.origin}${window.location.pathname}?d=${encoded}`;
+      const porSemanaOrdenado = [...parsed.porSemana].sort((a,b)=>(b.semana||0)-(a.semana||0));
+      let candidato = porSemanaOrdenado.map(p => p.slim || p);
+      const porMesSlim = parsed.porMes.map(p => p.slim || p);
+      let testUrl = "";
+      while (true) {
+        const slim = {
+          semanas: parsed.semanas,
+          meses: parsed.meses,
+          anoAtual: parsed.anoAtual || new Date().getFullYear(),
+          porSemana: candidato,
+          porMes: porMesSlim,
+        };
+        const encoded = await encodeData(slim);
+        testUrl = `${window.location.origin}${window.location.pathname}?d=${encoded}`;
+        if (testUrl.length <= LINK_MAX_CHARS || candidato.length === 0) break;
+        candidato = candidato.slice(0, -1); // tira a semana mais antiga
+      }
+      if (testUrl.length > LINK_MAX_CHARS) {
+        setCopied(false);
+        setLinkAviso(`Não foi possível gerar um link dentro do limite de ${LINK_MAX_CHARS.toLocaleString("pt-BR")} caracteres.`);
+        return;
+      }
+      if (candidato.length < parsed.porSemana.length) {
+        setLinkAviso(`O link com todas as ${parsed.porSemana.length} semanas ficaria acima do limite de ${LINK_MAX_CHARS.toLocaleString("pt-BR")} caracteres — incluí só as ${candidato.length} mais recentes.`);
+      }
+      url = testUrl;
       setLinkGerado(url);
     } catch (e) {
       console.error("Erro ao gerar link:", e);
@@ -804,6 +836,12 @@ export default function CsatApp() {
               </div>
             )}
 
+            {linkAviso && (
+              <div style={{ marginBottom: 16, padding: "10px 16px", background: "#FEF3C7", border: "1px solid #FBBF24", borderRadius: 8, fontSize: 13, color: "#92400E", fontWeight: 500 }}>
+                ⚠️ {linkAviso}
+              </div>
+            )}
+
             {/* Caixa de link para copiar manualmente */}
             {linkGerado && copied === "manual" && (
               <div style={{ marginBottom: 16, padding: "12px 16px", background: C.cinzaCard, border: `1px solid ${C.laranja}`, borderRadius: 8 }}>
@@ -926,7 +964,10 @@ export default function CsatApp() {
             {(tab === "parceiros" || tab === "motivos" || tab === "comentarios") && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: C.cinzaTexto, flexShrink: 0 }}>Filtrar parceiro:</span>
-                {parceirosDisponiveis.map(p => (
+                <button onClick={() => setOcultarFiltroParceiro(prev => { const novo = !prev; try { localStorage.setItem("dashParca_ocultarFiltroParceiros", novo ? "1" : "0"); } catch {} return novo; })} style={{ fontSize: 11, color: C.cinzaTexto, cursor: "pointer", background: "none", border: "none", fontWeight: 600 }}>
+                  {ocultarFiltroParceiro ? "▼ Mostrar" : "▲ Ocultar"}
+                </button>
+                {!ocultarFiltroParceiro && parceirosDisponiveis.map(p => (
                   <button key={p} onClick={() => setParceroFiltro(p)} style={{
                     padding: "5px 12px", borderRadius: 20, fontSize: 12,
                     border: `1px solid ${parceroFiltro === p ? C.laranja : C.cinzaBorda}`,
