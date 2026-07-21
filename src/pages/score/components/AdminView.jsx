@@ -88,20 +88,28 @@ export default function AdminView({ token }) {
     setCopiadoAtual('loading');
     let copiou = false;
     try {
-      await navigator.clipboard.writeText(url);
+      if (!navigator.clipboard || !window.ClipboardItem) throw new Error('sem suporte');
+      const htmlBlob = new Blob([`<a href="${url}">Dashboard Gestão Parça — Score</a>`], { type: 'text/html' });
+      const textBlob = new Blob([`Dashboard Gestão Parça — Score: ${url}`], { type: 'text/plain' });
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })]);
       copiou = true;
     } catch {
       try {
-        const el = document.createElement('textarea');
-        el.value = url;
-        el.style.position = 'fixed';
-        el.style.opacity = '0';
-        document.body.appendChild(el);
-        el.focus();
-        el.select();
-        copiou = document.execCommand('copy');
-        document.body.removeChild(el);
-      } catch { copiou = false; }
+        await navigator.clipboard.writeText(url);
+        copiou = true;
+      } catch {
+        try {
+          const el = document.createElement('textarea');
+          el.value = url;
+          el.style.position = 'fixed';
+          el.style.opacity = '0';
+          document.body.appendChild(el);
+          el.focus();
+          el.select();
+          copiou = document.execCommand('copy');
+          document.body.removeChild(el);
+        } catch { copiou = false; }
+      }
     }
     if (copiou) {
       setCopiadoAtual('done');
