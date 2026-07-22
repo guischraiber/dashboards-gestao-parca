@@ -1,5 +1,6 @@
 import { useEffect, Component } from "react";
 import { BrowserRouter, useLocation, useNavigate, NavLink } from "react-router-dom";
+import AbrangenciaApp from "./pages/AbrangenciaApp.jsx";
 import SlaApp from "./pages/SlaApp.jsx";
 import CsatApp from "./pages/CsatApp.jsx";
 import ScoreApp from "./pages/score/ScoreApp.jsx";
@@ -81,6 +82,9 @@ function NavBar() {
       <span style={{ fontWeight: 700, fontSize: 15, color: C.texto, marginRight: 16 }}>
         Gestão Parça
       </span>
+      <NavLink to="/abrangencia" style={linkStyle}>
+        Abrangência Parça
+      </NavLink>
       <NavLink to="/sla" style={linkStyle}>
         Performance Coleta
       </NavLink>
@@ -107,7 +111,7 @@ function AppShell() {
   // Redireciona a raiz (ou rota desconhecida) para /sla, sem desmontar nada.
   useEffect(() => {
     if (isPartnerLink) return;
-    if (!["/sla", "/csat", "/score"].includes(location.pathname)) {
+    if (!["/abrangencia", "/sla", "/csat", "/score"].includes(location.pathname)) {
       navigate("/sla", { replace: true });
     }
   }, [location.pathname, isPartnerLink, navigate]);
@@ -120,6 +124,7 @@ function AppShell() {
     );
   }
 
+  const showAbrangencia = location.pathname === "/abrangencia";
   const showSla = location.pathname === "/sla" || location.pathname === "/";
   const showCsat = location.pathname === "/csat";
   const showScore = location.pathname === "/score";
@@ -127,10 +132,14 @@ function AppShell() {
   return (
     <div style={{ minHeight: "100vh", background: C.cinzaFundo }}>
       <NavBar />
-      {/* Os três dashboards ficam sempre montados assim que visitados uma vez.
+      {/* Os dashboards ficam sempre montados assim que visitados uma vez.
           Trocar de aba só esconde visualmente os outros, então o estado de
-          importação de arquivos (ex.: CSVs do CSAT) não se perde ao navegar
-          entre eles. */}
+          importação de arquivos não se perde ao navegar entre eles. */}
+      <div style={{ display: showAbrangencia ? "block" : "none" }}>
+        <ErrorBoundary label="Abrangência Parça">
+          <AbrangenciaApp />
+        </ErrorBoundary>
+      </div>
       <div style={{ display: showSla ? "block" : "none" }}>
         <ErrorBoundary label="Performance Coleta">
           <SlaApp />
