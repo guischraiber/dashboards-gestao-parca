@@ -198,9 +198,9 @@ export function processarMes(row, config = DEFAULT_CONFIG) {
   const score = scoreFinal(nSla, nAgendamento, nCsat, config);
   return {
     mes: row.Mes,
-    // Ponderação do score entre os meses do ciclo — sempre foi o faturamento
-    // de Reversa, e continua sendo (não mexe no cálculo do score em si).
-    faturamento: paraNumero(row.Faturamento_Reversa),
+    // Ponderação do score entre os meses do ciclo, e faturamento total exibido
+    // na Visão Geral: soma de Reversa + Devolução (antes considerava só Reversa).
+    faturamento: paraNumero(row.Faturamento_Reversa) + paraNumero(row.Faturamento_Devolucao),
     sla, agendamento, csat,
     nSla, nAgendamento, nCsat,
     score,
