@@ -61,8 +61,9 @@ export function parseModeloUnico(csvTexto) {
     const agendamento = paraNumero(row.Agendamento_pct);
     const csat = paraNumero(row.CSAT_pct);
 
-    // Reversa continua obrigatória (é o que pondera o score entre os meses do
-    // ciclo — igual sempre foi). Devolução não entra nessa checagem.
+    // Reversa continua obrigatória pra o mês entrar no cálculo — mas a
+    // ponderação do score entre os meses do ciclo usa Reversa + Devolução
+    // combinadas. Devolução em si não entra nessa checagem de obrigatoriedade.
     if (faturamentoReversa == null || sla == null || agendamento == null || csat == null || taxaReversa == null) {
       avisos.push(`${parceiro} — ${mes}: preenchimento incompleto na planilha, mês não incluído.`);
       return;
