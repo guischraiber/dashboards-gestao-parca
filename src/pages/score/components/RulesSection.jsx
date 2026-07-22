@@ -87,11 +87,13 @@ export default function RulesSection({ config }) {
           </tbody>
         </table>
         <p style={{ fontSize: 13, color: '#6B7280' }}>
-          O score é recalculado a cada 3 meses, e o resultado vale para a taxa cobrada sobre coleta reversa,
-          devolução Bulky e terceiras nos 3 meses seguintes.
+          O score é recalculado a cada 3 meses, e o resultado vale para a taxa cobrada sobre coleta reversa
+          e devolução Bulky nos 3 meses seguintes.
         </p>
         <p style={{ fontSize: 14, lineHeight: 1.6 }}>
-          O ajuste é somado, em pontos percentuais, direto sobre a taxa contratada do parceiro:
+          O ajuste é somado, em pontos percentuais, direto sobre a taxa contratada de cada tipo de processo
+          (Coleta Reversa, Devolução) em que o parceiro atua — o mesmo ajuste vale para os dois,
+          cada um com sua própria taxa:
         </p>
         <p style={{ fontSize: 13, background: '#F8F7F4', padding: 10, borderRadius: 8, fontFamily: 'monospace' }}>
           Nova taxa = Taxa contratada + Ajuste da faixa
