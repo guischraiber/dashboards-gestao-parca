@@ -51,20 +51,18 @@ export function parseModeloUnico(csvTexto) {
     const faturamentoReversa = paraNumero(row['Faturamento Reversa'] ?? row.Faturamento_Reversa ?? row.Faturamento_mes);
     const taxaReversa = paraNumero(row['Taxa Reversa'] ?? row.Taxa_Reversa_pct ?? row.Taxa_Base_pct);
 
-    // Devolução e Terceiras são opcionais — nem todo parceiro atua nos 3 tipos
-    // de processo. Se a célula estiver em branco, o tipo simplesmente não
-    // entra no relatório de impacto financeiro desse parceiro.
+    // Devolução é opcional — nem todo parceiro atua nos 2 tipos de processo.
+    // Se a célula estiver em branco, o tipo simplesmente não entra no
+    // relatório de impacto financeiro desse parceiro.
     const faturamentoDevolucao = paraNumero(row['Faturamento Devolução'] ?? row.Faturamento_Devolucao);
     const taxaDevolucao = paraNumero(row['Taxa Devolução'] ?? row.Taxa_Devolucao_pct);
-    const faturamentoTerceiras = paraNumero(row['Faturamento Terceiras'] ?? row.Faturamento_Terceiras);
-    const taxaTerceiras = paraNumero(row['Taxa Terceiras'] ?? row.Taxa_Terceiras_pct);
 
     const sla = paraNumero(row.SLA_pct);
     const agendamento = paraNumero(row.Agendamento_pct);
     const csat = paraNumero(row.CSAT_pct);
 
     // Reversa continua obrigatória (é o que pondera o score entre os meses do
-    // ciclo — igual sempre foi). Devolução/Terceiras não entram nessa checagem.
+    // ciclo — igual sempre foi). Devolução não entra nessa checagem.
     if (faturamentoReversa == null || sla == null || agendamento == null || csat == null || taxaReversa == null) {
       avisos.push(`${parceiro} — ${mes}: preenchimento incompleto na planilha, mês não incluído.`);
       return;
@@ -79,8 +77,6 @@ export function parseModeloUnico(csvTexto) {
       Taxa_Reversa_pct: taxaReversa,
       Faturamento_Devolucao: faturamentoDevolucao,
       Taxa_Devolucao_pct: taxaDevolucao,
-      Faturamento_Terceiras: faturamentoTerceiras,
-      Taxa_Terceiras_pct: taxaTerceiras,
       SLA_pct: sla,
       Agendamento_pct: agendamento,
       CSAT_pct: csat,
