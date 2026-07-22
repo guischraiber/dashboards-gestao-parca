@@ -79,7 +79,7 @@ function paraNumero(v) {
 }
 
 // Igual a paraNumero, mas preserva null em vez de cair pra 0 — necessário pros
-// campos opcionais (Devolução/Terceiras), onde "em branco" precisa significar
+// campos opcionais (Devolução), onde "em branco" precisa significar
 // "esse parceiro não atua nesse tipo de processo", não "faturamento zero".
 function paraNumeroOuNull(v) {
   if (v == null || String(v).trim() === '') return null;
@@ -135,7 +135,6 @@ export function faixaDoScore(score, config = DEFAULT_CONFIG) {
 const PROCESSOS_DEF = [
   { chave: 'reversa', label: 'Coleta Reversa' },
   { chave: 'devolucao', label: 'Devolução' },
-  { chave: 'terceiras', label: 'Terceiras' },
 ];
 
 // Calcula o impacto financeiro de UM tipo de processo (mesma fórmula de sempre,
@@ -210,7 +209,6 @@ export function processarMes(row, config = DEFAULT_CONFIG) {
     processos: {
       reversa: { faturamento: paraNumeroOuNull(row.Faturamento_Reversa), taxaBase: paraNumeroOuNull(row.Taxa_Reversa_pct) },
       devolucao: { faturamento: paraNumeroOuNull(row.Faturamento_Devolucao), taxaBase: paraNumeroOuNull(row.Taxa_Devolucao_pct) },
-      terceiras: { faturamento: paraNumeroOuNull(row.Faturamento_Terceiras), taxaBase: paraNumeroOuNull(row.Taxa_Terceiras_pct) },
     },
   };
 }
