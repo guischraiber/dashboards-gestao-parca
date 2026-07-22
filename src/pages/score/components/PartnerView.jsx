@@ -159,8 +159,8 @@ export default function PartnerView({ codigo }) {
               </div>
             )}
             <p style={{ fontSize: 13, color: '#6B7280', marginTop: 12, marginBottom: 0 }}>
-              Essa taxa passa a valer nos tipos de processo em que você atua (coleta reversa, devolução e/ou
-              terceiras) nos próximos 3 meses, conforme o resultado do seu score neste trimestre.
+              Essa taxa passa a valer nos tipos de processo em que você atua (coleta reversa e/ou devolução)
+              nos próximos 3 meses, conforme o resultado do seu score neste trimestre.
               {!atual.elegivel && ' Como este ciclo ainda é informativo para você, essa mudança não será aplicada de fato.'}
             </p>
           </div>
