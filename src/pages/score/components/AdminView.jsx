@@ -352,7 +352,7 @@ export default function AdminView({ token }) {
             <p style={{ fontSize: 12, color: '#6B7280', marginTop: -8 }}>
               Receita projetada usando o faturamento do próprio trimestre avaliado como estimativa de volume
               para os próximos 3 meses. O mesmo ajuste do score (p.p.) se aplica em cada tipo de processo em
-              que o parceiro atua — clique num parceiro pra ver o detalhe por tipo (Reversa / Devolução / Terceiras).
+              que o parceiro atua — clique num parceiro pra ver o detalhe por tipo (Reversa / Devolução).
             </p>
             <table>
               <thead>
