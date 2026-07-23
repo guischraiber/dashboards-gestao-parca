@@ -103,18 +103,47 @@ function compararDatasets(anterior, atual) {
 function resumoPorUF(linhas) {
   const mapa = {};
   linhas.forEach(r => {
-    if (!mapa[r.estado]) mapa[r.estado] = { total: 0, parca: 0, naoParca: 0, cidades: new Set() };
-    mapa[r.estado].total++;
-    mapa[r.estado].cidades.add(normalizarCidade(r.cidade));
-    if (r.validacao === "PARÇA") mapa[r.estado].parca++;
-    else mapa[r.estado].naoParca++;
+    if (!mapa[r.estado]) mapa[r.estado] = {
+      total: 0, parca: 0, naoParca: 0, cidades: new Set(),
+      abrangenciaTotal: 0, abrangenciaParca: 0, abrangenciaNaoParca: 0,
+    };
+    const m = mapa[r.estado];
+    m.total++;
+    m.cidades.add(normalizarCidade(r.cidade));
+    m.abrangenciaTotal += r.abrangencia;
+    if (r.validacao === "PARÇA") { m.parca++; m.abrangenciaParca += r.abrangencia; }
+    else { m.naoParca++; m.abrangenciaNaoParca += r.abrangencia; }
   });
   return mapa;
 }
 
+// Agrupa por cidade (não por linha) pra achar oportunidades de expansão:
+// cidades que HOJE não têm nenhuma opção Parça, ordenadas pelo volume
+// (soma de Abrangência) que está passando por transportadora não-parceira.
+function calcularOportunidades(linhas) {
+  const porCidade = new Map();
+  linhas.forEach(r => {
+    const key = `${r.estado}|${normalizarCidade(r.cidade)}`;
+    if (!porCidade.has(key)) {
+      porCidade.set(key, { estado: r.estado, cidade: r.cidade, temParca: false, abrangencia: 0, transportadoras: new Set() });
+    }
+    const c = porCidade.get(key);
+    c.abrangencia += r.abrangencia;
+    if (r.validacao === "PARÇA") c.temParca = true;
+    else c.transportadoras.add(r.transportadora);
+  });
+  return [...porCidade.values()]
+    .filter(c => !c.temParca)
+    .sort((a, b) => b.abrangencia - a.abrangencia)
+    .map(c => ({ ...c, transportadoras: [...c.transportadoras].join(", ") }));
+}
+
+// Cor do bloco no mapa: baseada na cobertura PONDERADA por Abrangência
+// (não simplesmente % de linhas ou cidades) — reflete melhor onde está o
+// volume real coberto por parceiros.
 function corDoBloco(dadosUF) {
-  if (!dadosUF || dadosUF.total === 0) return "#E5E3DF";
-  const pct = dadosUF.parca / dadosUF.total;
+  if (!dadosUF || dadosUF.abrangenciaTotal === 0) return "#E5E3DF";
+  const pct = dadosUF.abrangenciaParca / dadosUF.abrangenciaTotal;
   if (pct >= 0.75) return "#16A34A";
   if (pct >= 0.4) return "#84CC16";
   if (pct > 0) return "#F59E0B";
@@ -176,14 +205,39 @@ export default function AbrangenciaApp() {
   const totais = useMemo(() => {
     if (!atual) return null;
     const cidades = new Set(atual.rows.map(r => `${r.estado}|${normalizarCidade(r.cidade)}`));
-    const parca = atual.rows.filter(r => r.validacao === "PARÇA").length;
+    const cidadesComParca = new Set(atual.rows.filter(r => r.validacao === "PARÇA").map(r => `${r.estado}|${normalizarCidade(r.cidade)}`));
+    const parcaLinhas = atual.rows.filter(r => r.validacao === "PARÇA").length;
+    const abrangenciaTotal = atual.rows.reduce((s, r) => s + r.abrangencia, 0);
+    const abrangenciaParca = atual.rows.filter(r => r.validacao === "PARÇA").reduce((s, r) => s + r.abrangencia, 0);
     return {
       linhas: atual.rows.length,
       cidades: cidades.size,
       transportadoras: new Set(atual.rows.map(r => r.transportadora)).size,
-      pctParca: atual.rows.length ? (parca / atual.rows.length) * 100 : 0,
+      pctPorLinha: atual.rows.length ? (parcaLinhas / atual.rows.length) * 100 : 0,
+      pctPorCidade: cidades.size ? (cidadesComParca.size / cidades.size) * 100 : 0,
+      pctPonderada: abrangenciaTotal ? (abrangenciaParca / abrangenciaTotal) * 100 : 0,
+      abrangenciaTotal, abrangenciaParca,
     };
   }, [atual]);
+
+  const oportunidades = useMemo(() => atual ? calcularOportunidades(atual.rows) : [], [atual]);
+
+  const oportunidadesPorUF = useMemo(() => {
+    const mapa = {};
+    oportunidades.forEach(o => { mapa[o.estado] = (mapa[o.estado] || 0) + o.abrangencia; });
+    return mapa;
+  }, [oportunidades]);
+
+  // Top 5 estados com mais volume perdido (maior oportunidade) — usado pra
+  // destacar visualmente no mapa.
+  const topOportunidadeUFs = useMemo(() => {
+    return new Set(
+      Object.entries(oportunidadesPorUF)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([uf]) => uf)
+    );
+  }, [oportunidadesPorUF]);
 
   const comparacao = useMemo(() => {
     if (!atual || !anterior) return null;
@@ -238,7 +292,7 @@ export default function AbrangenciaApp() {
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            {[["geral", "🏠 Visão Geral"], ["mapa", "🗺️ Mapa"], ["comparacao", "🔄 Comparação"]].map(([k, l]) => (
+            {[["geral", "🏠 Visão Geral"], ["mapa", "🗺️ Mapa"], ["oportunidades", "🎯 Oportunidades"], ["comparacao", "🔄 Comparação"]].map(([k, l]) => (
               <button key={k} onClick={() => setAba(k)} style={{
                 padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${aba === k ? C.laranja : C.cinzaBorda}`,
                 background: aba === k ? `${C.laranja}18` : "transparent", color: aba === k ? C.laranja : C.cinzaTexto,
@@ -248,48 +302,72 @@ export default function AbrangenciaApp() {
           </div>
 
           {aba === "geral" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
-              <Kpi label="Linhas na base" valor={totais.linhas.toLocaleString("pt-BR")} />
-              <Kpi label="Cidades atendidas" valor={totais.cidades.toLocaleString("pt-BR")} />
-              <Kpi label="Transportadoras" valor={totais.transportadoras.toLocaleString("pt-BR")} />
-              <Kpi label="% cobertura Parça" valor={`${totais.pctParca.toFixed(1)}%`} cor={totais.pctParca >= 50 ? C.verde : C.vermelho} />
-            </div>
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 14 }}>
+                <Kpi label="Linhas na base" valor={totais.linhas.toLocaleString("pt-BR")} />
+                <Kpi label="Cidades atendidas" valor={totais.cidades.toLocaleString("pt-BR")} />
+                <Kpi label="Transportadoras" valor={totais.transportadoras.toLocaleString("pt-BR")} />
+              </div>
+
+              <div style={{ background: C.cinzaCard, border: `2px solid ${C.laranja}`, borderRadius: 12, padding: 20, maxWidth: 340 }}>
+                <div style={{ fontSize: 12, color: C.cinzaTexto, marginBottom: 4 }}>
+                  Cobertura Parça — ponderada por Abrangência
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 700, color: totais.pctPonderada >= 50 ? C.verde : C.vermelho }}>
+                  {totais.pctPonderada.toFixed(1)}%
+                </div>
+                <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 4 }}>
+                  {totais.abrangenciaParca.toLocaleString("pt-BR")} de {totais.abrangenciaTotal.toLocaleString("pt-BR")} de Abrangência em atendimentos Parça
+                </div>
+              </div>
+            </>
           )}
 
           {aba === "mapa" && (
             <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
               <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: 20 }}>
                 <div style={{ fontSize: 12, color: C.cinzaTexto, marginBottom: 10 }}>
-                  Cada bloco é um estado (posição esquemática, não é mapa geográfico exato). Cor = % de cidades cobertas por transportadora Parça. Clique num estado pra ver o detalhe.
+                  Cada bloco é um estado (posição esquemática, não é mapa geográfico exato). Cor = cobertura Parça
+                  <strong> ponderada por Abrangência</strong> (volume). O anel 🎯 marca os 5 estados com mais volume
+                  ainda sem nenhuma opção Parça — maior oportunidade de expansão. Clique num estado pra ver o detalhe.
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(9, 48px)", gridAutoRows: "48px", gap: 4 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(9, 52px)", gridAutoRows: "52px", gap: 5 }}>
                   {GRADE_UF.map(({ uf, col, row }) => {
                     const dados = resumoUF[uf];
                     const cor = corDoBloco(dados);
                     const ativo = ufSelecionada === uf;
+                    const oportunidade = topOportunidadeUFs.has(uf);
+                    const pctPonderadoUF = dados && dados.abrangenciaTotal > 0 ? (dados.abrangenciaParca / dados.abrangenciaTotal * 100) : null;
                     return (
                       <div key={uf}
                         onClick={() => dados && setUfSelecionada(ativo ? null : uf)}
-                        title={dados ? `${uf}: ${dados.parca} Parça / ${dados.total} total` : `${uf}: sem dado`}
+                        title={dados
+                          ? `${uf}: ${pctPonderadoUF.toFixed(0)}% ponderado · ${dados.parca}/${dados.total} atendimentos Parça · Abrangência: ${dados.abrangenciaParca.toLocaleString("pt-BR")}/${dados.abrangenciaTotal.toLocaleString("pt-BR")}${oportunidade ? " · 🎯 alta oportunidade de expansão" : ""}`
+                          : `${uf}: sem dado`}
                         style={{
+                          position: "relative",
                           gridColumn: col + 1, gridRow: row + 1, background: cor,
-                          borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                          borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                           fontSize: 11, fontWeight: 700, color: dados ? "#fff" : "#9CA3AF",
                           cursor: dados ? "pointer" : "default",
-                          border: ativo ? `3px solid ${C.texto}` : "2px solid transparent",
+                          border: ativo ? `3px solid ${C.texto}` : oportunidade ? "3px solid #1C1917" : "2px solid transparent",
+                          boxShadow: oportunidade ? "0 0 0 2px #FBBF24" : "none",
                           opacity: dados ? 1 : 0.6,
                         }}>
+                        {oportunidade && <span style={{ position: "absolute", top: -8, right: -6, fontSize: 12 }}>🎯</span>}
                         {uf}
+                        {pctPonderadoUF !== null && <span style={{ fontSize: 9, fontWeight: 500, opacity: 0.9 }}>{pctPonderadoUF.toFixed(0)}%</span>}
                       </div>
                     );
                   })}
                 </div>
                 <div style={{ display: "flex", gap: 14, marginTop: 14, fontSize: 11, color: C.cinzaTexto, flexWrap: "wrap" }}>
-                  <Legenda cor="#16A34A" texto="≥75% Parça" />
-                  <Legenda cor="#84CC16" texto="40–75% Parça" />
-                  <Legenda cor="#F59E0B" texto="<40% Parça" />
-                  <Legenda cor="#DC2626" texto="0% Parça (só não-parça)" />
+                  <Legenda cor="#16A34A" texto="≥75% ponderado" />
+                  <Legenda cor="#84CC16" texto="40–75% ponderado" />
+                  <Legenda cor="#F59E0B" texto="<40% ponderado" />
+                  <Legenda cor="#DC2626" texto="0% (só não-parça)" />
                   <Legenda cor="#E5E3DF" texto="Sem dado" />
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>🎯 Top 5 oportunidade de expansão</div>
                 </div>
               </div>
 
@@ -317,6 +395,79 @@ export default function AbrangenciaApp() {
                     </tbody>
                   </table>
                 </div>
+              )}
+            </div>
+          )}
+
+          {aba === "oportunidades" && (
+            <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>🎯 Onde priorizar novos parceiros</div>
+              <div style={{ fontSize: 13, color: C.cinzaTexto, marginBottom: 16, lineHeight: 1.5 }}>
+                Cidades que hoje <strong>não têm nenhuma transportadora Parça</strong>, ordenadas pelo volume
+                (soma de Abrangência) que está passando por transportadoras não-parceiras — ou seja, o que se ganha
+                de cobertura ponderada se um parceiro passar a atender ali.
+              </div>
+
+              {oportunidades.length === 0 ? (
+                <div style={{ fontSize: 13, color: C.verde, fontWeight: 600 }}>✓ Todas as cidades já têm pelo menos uma opção Parça.</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 20 }}>
+                    <Kpi label="Cidades sem nenhuma opção Parça" valor={oportunidades.length.toLocaleString("pt-BR")} cor={C.vermelho} />
+                    <Kpi label="Volume (Abrangência) em jogo" valor={oportunidades.reduce((s, o) => s + o.abrangencia, 0).toLocaleString("pt-BR")} cor={C.amarelo} />
+                    <Kpi label="Estados envolvidos" valor={Object.keys(oportunidadesPorUF).length} />
+                  </div>
+
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Por estado (ordenado por volume perdido)</div>
+                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 24 }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: C.cinzaTexto }}>
+                        <th style={{ padding: "4px 6px" }}>Estado</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Volume sem cobertura Parça</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Cidades sem Parça</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(oportunidadesPorUF)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([uf, valor]) => (
+                          <tr key={uf} style={{ borderTop: `1px solid ${C.cinzaBorda}` }}>
+                            <td style={{ padding: "4px 6px", fontWeight: 600 }}>
+                              {topOportunidadeUFs.has(uf) && "🎯 "}{uf}
+                            </td>
+                            <td style={{ padding: "4px 6px", textAlign: "right" }}>{valor.toLocaleString("pt-BR")}</td>
+                            <td style={{ padding: "4px 6px", textAlign: "right" }}>{oportunidades.filter(o => o.estado === uf).length}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>
+                    Top {Math.min(30, oportunidades.length)} cidades por volume perdido
+                  </div>
+                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: C.cinzaTexto }}>
+                        <th style={{ padding: "4px 6px" }}>#</th>
+                        <th style={{ padding: "4px 6px" }}>Estado</th>
+                        <th style={{ padding: "4px 6px" }}>Cidade</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right" }}>Abrangência (volume)</th>
+                        <th style={{ padding: "4px 6px" }}>Transportadora(s) atual(is)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {oportunidades.slice(0, 30).map((o, i) => (
+                        <tr key={i} style={{ borderTop: `1px solid ${C.cinzaBorda}` }}>
+                          <td style={{ padding: "4px 6px", color: C.cinzaTexto }}>{i + 1}</td>
+                          <td style={{ padding: "4px 6px" }}>{o.estado}</td>
+                          <td style={{ padding: "4px 6px" }}>{o.cidade}</td>
+                          <td style={{ padding: "4px 6px", textAlign: "right", fontWeight: 700, color: C.vermelho }}>{o.abrangencia.toLocaleString("pt-BR")}</td>
+                          <td style={{ padding: "4px 6px" }}>{o.transportadoras}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
               )}
             </div>
           )}
