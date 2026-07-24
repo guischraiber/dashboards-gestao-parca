@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
+import MapaAbrangencia from "./MapaAbrangencia.jsx";
 const COORD_CIDADES = {
   "CE|Fortaleza":[-3.7166,-38.5423],
   "RS|Santa Maria":[-29.6868,-53.8149],
@@ -2234,10 +2235,7 @@ export default function AbrangenciaApp() {
 
           {/* ══ MAPA ══ */}
           {aba==="mapa" && (
-            <MapaGeografico
-              rows={atual.rows}
-              oportunidadeUFs={topOportunidadeUFs}
-            />
+            <MapaAbrangencia rows={atual.rows} coordCidades={COORD_CIDADES} />
           )}
 
           {/* ══ OPORTUNIDADES ══ */}
@@ -2265,7 +2263,7 @@ export default function AbrangenciaApp() {
                 <>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
                     <Kpi label="Cidades sem nenhuma opção Parça" valor={oportunidadesFiltradas.length.toLocaleString("pt-BR")} cor={C.vermelho} />
-                    <Kpi label="Volume (Abrangência) em jogo" valor={oportunidadesFiltradas.reduce((s,o)=>s+o.abrangencia,0).toLocaleString("pt-BR")} cor={C.amarelo} />
+                    <Kpi label="Volume de coletas em jogo" valor={oportunidadesFiltradas.reduce((s,o)=>s+o.abrangencia,0).toLocaleString("pt-BR")} cor={C.amarelo} />
                     <Kpi label="Estados envolvidos" valor={[...new Set(oportunidadesFiltradas.map(o=>o.estado))].length} />
                   </div>
 
@@ -2302,7 +2300,7 @@ export default function AbrangenciaApp() {
                         <th style={{ padding:"4px 6px" }}>#</th>
                         <th style={{ padding:"4px 6px" }}>Estado</th>
                         <th style={{ padding:"4px 6px" }}>Cidade</th>
-                        <th style={{ padding:"4px 6px", textAlign:"right" }}>Abrangência ↓</th>
+                        <th style={{ padding:"4px 6px", textAlign:"right" }}>Coletas ↓</th>
                         <th style={{ padding:"4px 6px" }}>Transportadora(s) atual(is)</th>
                       </tr>
                     </thead>
@@ -2510,7 +2508,7 @@ function MapaGeografico({ rows, oportunidadeUFs }) {
               boxShadow:"0 4px 12px rgba(0,0,0,0.3)",
             }}>
               <div style={{ fontWeight:700, marginBottom:2 }}>{tooltip.cidade} — {tooltip.uf}</div>
-              <div>Abrangência: <strong>{tooltip.abrangencia.toLocaleString("pt-BR")}</strong></div>
+              <div>Coletas: <strong>{tooltip.abrangencia.toLocaleString("pt-BR")}</strong></div>
               <div>Cobertura Parça: <strong style={{ color: tooltip.pct>=0.5?"#86EFAC":"#FCA5A5" }}>{(tooltip.pct*100).toFixed(0)}%</strong></div>
             </div>
           )}
@@ -2538,7 +2536,7 @@ function MapaGeografico({ rows, oportunidadeUFs }) {
                   <th style={{ padding:"4px 6px" }}>Cidade</th>
                   <th style={{ padding:"4px 6px" }}>Transportadora</th>
                   <th style={{ padding:"4px 6px" }}>Validação</th>
-                  <th style={{ padding:"4px 6px", textAlign:"right" }}>Abrangência ↓</th>
+                  <th style={{ padding:"4px 6px", textAlign:"right" }}>Coletas ↓</th>
                 </tr>
               </thead>
               <tbody>
