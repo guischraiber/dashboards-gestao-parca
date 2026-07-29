@@ -1928,20 +1928,105 @@ function normalizarCidade(s) {
   return String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
 }
 
+// Calcula a semana ISO do ano a partir de uma data YYYY-MM-DD.
+// Usa o algoritmo padrão ISO 8601 (semana 1 = a que contém a primeira quinta-feira do ano).
+function semanaISO(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d)) return null;
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  return Math.ceil(((tmp - yearStart) / 86400000 + 1) / 7);
+}
+
 function parseCSVAbrangencia(texto) {
   const { data } = Papa.parse(texto, { header:true, skipEmptyLines:true });
   return data
     .filter(r => r["Logistica Reversa Estado"] && r["Logistica Reversa Cidade"])
-    .map(r => ({
-      validacao:      String(r["VALIDAÇÃO"]||"").trim().toUpperCase(),
-      transportadora: String(r["Logistica Reversa Transportadora"]||"").trim(),
-      estado:         String(r["Logistica Reversa Estado"]||"").trim().toUpperCase(),
-      cidade:         String(r["Logistica Reversa Cidade"]||"").trim(),
-      abrangencia:    parseFloat(String(r["Abrangencia"]||"").replace(",",".")) || 0,
-    }));
+    .map(r => {
+      // Coluna de data: "Logistica Reversa Data Coleta Efetivada" (formato YYYY-MM-DD)
+      const dataColeta = String(r["Logistica Reversa Data Coleta Efetivada"]||"").trim();
+      // Mês e Ano: vêm da planilha OU são extraídos da data
+      const mesRaw  = r["Logistica Reversa Data Coleta Efetivada Month"] || r["Mês"] || r["Mes"];
+      const anoRaw  = r["Logistica Reversa Data Coleta Efetivada Year"]  || r["Ano"];
+      // Semana ISO: sempre calculada a partir da data (não vem da planilha)
+      const semanaCalc = semanaISO(dataColeta);
+      // Fallback: extrai mês/ano da data se as colunas estiverem vazias
+      let mes = parseInt(mesRaw) || null;
+      let ano = parseInt(anoRaw) || null;
+      if (dataColeta && dataColeta.length >= 7) {
+        const [y, m] = dataColeta.split("-");
+        if (!mes) mes = parseInt(m) || null;
+        if (!ano) ano = parseInt(y) || null;
+      }
+      return {
+        validacao:      String(r["VALIDAÇÃO"] || r["Validação"] || r["Validacao"] || "").trim().toUpperCase(),
+        transportadora: String(r["Logistica Reversa Transportadora"]||"").trim(),
+        estado:         String(r["Logistica Reversa Estado"]||"").trim().toUpperCase(),
+        cidade:         String(r["Logistica Reversa Cidade"]||"").trim(),
+        abrangencia:    parseFloat(String(r["Abrangencia"]||"").replace(",",".")) || 0,
+        dataColeta,
+        semana:         semanaCalc,
+        mes,
+        ano,
+      };
+    });
 }
 
+// ── Chave única por linha considerando o período ──────────────────────────────
 function chaveLinha(r) { return `${r.estado}|${normalizarCidade(r.cidade)}|${r.transportadora}`; }
+function chaveLinhaComPeriodo(r) {
+  const s = r.semana ?? "?";
+  const a = r.ano ?? "?";
+  return `${a}|S${s}|${r.estado}|${normalizarCidade(r.cidade)}|${r.transportadora}`;
+}
+
+// ── Detecta retroativos entre duas importações ────────────────────────────────
+// Retroativo = uma semana passada (não a semana mais recente da base atual) que
+// mudou de volume em relação à importação anterior.
+function detectarRetroativos(rowsAnterior, rowsAtual) {
+  // Semana mais recente da base anterior (referência temporal)
+  const semanasAnt = rowsAnterior.map(r => (r.ano ?? 0) * 100 + (r.semana ?? 0)).filter(Boolean);
+  const semanaMaxAnt = semanasAnt.length ? Math.max(...semanasAnt) : 0;
+
+  const mapAnt = new Map(rowsAnterior.map(r => [chaveLinhaComPeriodo(r), r]));
+  const mapAt  = new Map(rowsAtual.map(r => [chaveLinhaComPeriodo(r), r]));
+
+  const retroativos = []; // { chave, antes, depois, delta, pctDelta }
+
+  for (const [chave, rAt] of mapAt) {
+    const periodoKey = (rAt.ano ?? 0) * 100 + (rAt.semana ?? 0);
+    // Só é retroativo se a semana já existia na base anterior (não é semana nova).
+    // Semanas estritamente MAIORES que a mais recente da base anterior são dados
+    // novos normais, não retroativos.
+    if (periodoKey === 0 || periodoKey > semanaMaxAnt) continue;
+
+    const rAnt = mapAnt.get(chave);
+    if (!rAnt) {
+      // Linha nova em semana passada = retroativo de adição
+      retroativos.push({ antes: null, depois: rAt, delta: rAt.abrangencia,
+        pctDelta: null, tipo: "adição" });
+    } else if (rAnt.abrangencia !== rAt.abrangencia) {
+      // Linha existente com volume diferente = retroativo de ajuste
+      const delta = rAt.abrangencia - rAnt.abrangencia;
+      const pctDelta = rAnt.abrangencia > 0 ? Math.abs(delta / rAnt.abrangencia) * 100 : null;
+      retroativos.push({ antes: rAnt, depois: rAt, delta, pctDelta, tipo: "ajuste" });
+    }
+  }
+
+  // Linhas removidas de semanas passadas = retroativo de remoção
+  for (const [chave, rAnt] of mapAnt) {
+    const periodoKey = (rAnt.ano ?? 0) * 100 + (rAnt.semana ?? 0);
+    if (periodoKey === 0 || periodoKey > semanaMaxAnt) continue;
+    if (!mapAt.has(chave)) {
+      retroativos.push({ antes: rAnt, depois: null, delta: -rAnt.abrangencia,
+        pctDelta: null, tipo: "remoção" });
+    }
+  }
+
+  return retroativos;
+}
 
 function compararDatasets(anterior, atual) {
   const mapAnt = new Map(anterior.map(r=>[chaveLinha(r),r]));
@@ -2017,6 +2102,8 @@ export default function AbrangenciaApp() {
   const [loading,  setLoading]  = useState("");
   const [erro,     setErro]     = useState("");
   const [avisoPersist, setAvisoPersist] = useState(false);
+  const [thresholdPct, setThresholdPct] = useState(10); // % para alertas retroativos
+  const [expandidosRetro, setExpandidosRetro] = useState(new Set()); // estados expandidos na tabela
 
   // ── Estado dos filtros da Visão Geral
   const [fgValidacao, setFgValidacao] = useState("Todos"); // Todos | PARÇA | NÃO PARÇA
@@ -2046,14 +2133,17 @@ export default function AbrangenciaApp() {
         const rows = parseCSVAbrangencia(ev.target.result);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: VALIDAÇÃO, Logistica Reversa Transportadora, Logistica Reversa Estado, Logistica Reversa Cidade, Abrangencia.");
         const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:ev.target.result };
-        if (atual) { await salvarChave("anterior", atual); setAnterior(atual); }
+        // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
+        // independente do estado React (que pode estar desatualizado dentro do closure).
+        const atualSalvo = await carregarChave("atual");
+        if (atualSalvo) { await salvarChave("anterior", atualSalvo); setAnterior(atualSalvo);; }
         const ok = await salvarChave("atual", novoAtual);
         setAtual(novoAtual); setAvisoPersist(!ok);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
     };
     reader.onerror = () => { setErro("Erro ao ler o arquivo."); setLoading(""); };
     reader.readAsText(file);
-  }, [atual]);
+  }, []);
 
   const baixarUltimaImportada = useCallback(() => {
     if (!atual) return;
@@ -2065,7 +2155,42 @@ export default function AbrangenciaApp() {
     URL.revokeObjectURL(url);
   }, [atual]);
 
-  // ── Dados derivados ────────────────────────────────────────────────────────
+  // ── Dados retroativos ──────────────────────────────────────────────────────
+  const retroativos = useMemo(() => {
+    if (!atual || !anterior) return [];
+    return detectarRetroativos(anterior.rows, atual.rows);
+  }, [atual, anterior]);
+
+  // Agrega retroativos por Estado → Semana → Cidade/Transportadora
+  const retroPorEstado = useMemo(() => {
+    const mapa = {};
+    retroativos.forEach(r => {
+      const ref = r.depois || r.antes;
+      const uf = ref.estado;
+      const sem = `${ref.ano ?? "?"}|S${ref.semana ?? "?"}`;
+      if (!mapa[uf]) mapa[uf] = { uf, deltaTotal: 0, semanas: {}, numCidades: new Set(), alerta: false };
+      mapa[uf].deltaTotal += r.delta;
+      if (!mapa[uf].semanas[sem]) mapa[uf].semanas[sem] = { sem, deltaTotal: 0, linhas: [] };
+      mapa[uf].semanas[sem].deltaTotal += r.delta;
+      mapa[uf].semanas[sem].linhas.push(r);
+      mapa[uf].numCidades.add(`${ref.cidade}|${ref.transportadora}`);
+    });
+    // Calcula % variação e marca alertas por estado
+    Object.values(mapa).forEach(uf => {
+      // Volume original do estado na base anterior
+      const volOriginal = anterior.rows
+        .filter(r => r.estado === uf.uf)
+        .reduce((s, r) => s + r.abrangencia, 0);
+      const pctVariacao = volOriginal > 0 ? Math.abs(uf.deltaTotal / volOriginal) * 100 : null;
+      uf.pctVariacao = pctVariacao;
+      uf.alerta = pctVariacao !== null && pctVariacao >= thresholdPct;
+      uf.numCidades = uf.numCidades.size;
+    });
+    return Object.values(mapa).sort((a, b) => Math.abs(b.deltaTotal) - Math.abs(a.deltaTotal));
+  }, [retroativos, anterior, thresholdPct]);
+
+  const numAlertas = useMemo(() => retroPorEstado.filter(r => r.alerta).length, [retroPorEstado]);
+  const totalDeltaRetro = useMemo(() => retroativos.reduce((s, r) => s + r.delta, 0), [retroativos]);
   const estadosDisponiveis = useMemo(() =>
     atual ? [...new Set(atual.rows.map(r=>r.estado))].sort() : [],
   [atual]);
@@ -2182,7 +2307,7 @@ export default function AbrangenciaApp() {
 
           {/* ── Abas ── */}
           <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["oportunidades","🎯 Oportunidades"],["comparacao","🔄 Comparação"]].map(([k,l])=>(
+            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["oportunidades","🎯 Oportunidades"],["retroativos","⚠️ Retroativos"],["comparacao","🔄 Comparação"]].map(([k,l])=>(
               <button key={k} onClick={()=>setAba(k)} style={{
                 padding:"8px 16px", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer",
                 border:`1.5px solid ${aba===k?C.laranja:C.cinzaBorda}`,
@@ -2316,6 +2441,186 @@ export default function AbrangenciaApp() {
                       ))}
                     </tbody>
                   </table>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ══ RETROATIVOS ══ */}
+          {aba==="retroativos" && (
+            <div>
+              {!anterior ? (
+                <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
+                  A aba de retroativos aparece a partir da segunda importação — ela compara a base atual com a anterior e detecta semanas passadas que mudaram de volume.
+                </div>
+              ) : (
+                <>
+                  {/* Banner de alerta */}
+                  {numAlertas > 0 && (
+                    <div style={{ padding:"12px 18px", borderRadius:10, marginBottom:16,
+                      background: numAlertas >= 3 ? "#FEE2E2" : "#FEF3C7",
+                      border: `1.5px solid ${numAlertas >= 3 ? "#DC2626" : "#FBBF24"}`,
+                      display:"flex", alignItems:"center", gap:12 }}>
+                      <span style={{ fontSize:22 }}>{numAlertas >= 3 ? "🔴" : "🟡"}</span>
+                      <div>
+                        <div style={{ fontWeight:700, fontSize:14, color: numAlertas >= 3 ? "#991B1B" : "#92400E" }}>
+                          {numAlertas} estado{numAlertas > 1 ? "s" : ""} com variação retroativa acima do threshold ({thresholdPct}%)
+                        </div>
+                        <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:2 }}>
+                          Delta total da base: <strong>{totalDeltaRetro > 0 ? "+" : ""}{totalDeltaRetro.toLocaleString("pt-BR")}</strong> coletas retroativas.
+                          Verifique se os dados das semanas afetadas são esperados ou indicam problema na extração.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {retroativos.length === 0 && (
+                    <div style={{ padding:"12px 18px", borderRadius:10, marginBottom:16, background:"#DCFCE7", border:"1.5px solid #16A34A", display:"flex", alignItems:"center", gap:12 }}>
+                      <span style={{ fontSize:22 }}>✅</span>
+                      <div style={{ fontWeight:600, color:"#166534" }}>Nenhum dado retroativo detectado — as semanas anteriores estão idênticas à importação anterior.</div>
+                    </div>
+                  )}
+
+                  {/* KPIs + threshold */}
+                  <div style={{ display:"flex", gap:14, marginBottom:18, flexWrap:"wrap", alignItems:"flex-end" }}>
+                    <div style={{ background:C.cinzaCard, border:`2px solid ${numAlertas>0?(numAlertas>=3?C.vermelho:C.amarelo):C.cinzaBorda}`, borderRadius:12, padding:"14px 20px", minWidth:160 }}>
+                      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:2 }}>Estados com alerta</div>
+                      <div style={{ fontSize:28, fontWeight:700, color:numAlertas>0?(numAlertas>=3?C.vermelho:C.amarelo):C.verde }}>{numAlertas}</div>
+                    </div>
+                    <Kpi label="Ajustes retroativos detectados" valor={retroativos.length.toLocaleString("pt-BR")} />
+                    <Kpi label="Delta total de coletas" valor={`${totalDeltaRetro >= 0 ? "+" : ""}${totalDeltaRetro.toLocaleString("pt-BR")}`}
+                      cor={totalDeltaRetro > 0 ? C.verde : totalDeltaRetro < 0 ? C.vermelho : C.cinzaTexto} />
+
+                    {/* Threshold configurável */}
+                    <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:"14px 20px", minWidth:220 }}>
+                      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:6 }}>Threshold de alerta (%)</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <input type="range" min={1} max={50} value={thresholdPct}
+                          onChange={e=>setThresholdPct(Number(e.target.value))}
+                          style={{ flex:1, accentColor:C.laranja }} />
+                        <span style={{ fontWeight:700, fontSize:16, minWidth:36, textAlign:"right" }}>{thresholdPct}%</span>
+                      </div>
+                      <div style={{ fontSize:10, color:C.cinzaTexto, marginTop:4 }}>
+                        Estados com variação acima desse % são marcados como alerta
+                      </div>
+                    </div>
+                  </div>
+
+                  {retroativos.length > 0 && (
+                    <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
+                      <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>Detalhamento por Estado → Semana → Cidade/Transportadora</div>
+                      <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:14 }}>
+                        Clique num estado para ver as semanas afetadas. Clique numa semana para ver as linhas individuais.
+                      </div>
+
+                      {/* Tabela nível 1: por Estado */}
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                        <thead>
+                          <tr style={{ background:C.cinzaFundo, textAlign:"left", color:C.cinzaTexto }}>
+                            <th style={{ padding:"8px 10px", width:28 }} />
+                            <th style={{ padding:"8px 10px" }}>Estado</th>
+                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Semanas afetadas</th>
+                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Cidades/transp.</th>
+                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Δ Coletas</th>
+                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Variação %</th>
+                            <th style={{ padding:"8px 10px" }}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {retroPorEstado.map(uf => {
+                            const aberto = expandidosRetro.has(uf.uf);
+                            const semanas = Object.values(uf.semanas).sort((a,b)=>a.sem.localeCompare(b.sem));
+                            return (
+                              <React.Fragment key={uf.uf}>
+                                {/* Linha do estado */}
+                                <tr onClick={()=>setExpandidosRetro(prev => {
+                                    const n = new Set(prev);
+                                    aberto ? n.delete(uf.uf) : n.add(uf.uf);
+                                    return n;
+                                  })}
+                                  style={{ borderTop:`1px solid ${C.cinzaBorda}`, cursor:"pointer",
+                                    background: uf.alerta ? (uf.pctVariacao >= thresholdPct*2 ? "#FEF2F2" : "#FFFBEB") : "transparent" }}>
+                                  <td style={{ padding:"8px 10px", color:C.cinzaTexto }}>{aberto ? "▾" : "▸"}</td>
+                                  <td style={{ padding:"8px 10px", fontWeight:700 }}>
+                                    {uf.alerta && "⚠️ "}{uf.uf}
+                                  </td>
+                                  <td style={{ padding:"8px 10px", textAlign:"right" }}>{Object.keys(uf.semanas).length}</td>
+                                  <td style={{ padding:"8px 10px", textAlign:"right" }}>{uf.numCidades}</td>
+                                  <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600,
+                                    color: uf.deltaTotal > 0 ? C.verde : uf.deltaTotal < 0 ? C.vermelho : C.cinzaTexto }}>
+                                    {uf.deltaTotal > 0 ? "+" : ""}{uf.deltaTotal.toLocaleString("pt-BR")}
+                                  </td>
+                                  <td style={{ padding:"8px 10px", textAlign:"right" }}>
+                                    {uf.pctVariacao !== null ? `${uf.pctVariacao.toFixed(1)}%` : "—"}
+                                  </td>
+                                  <td style={{ padding:"8px 10px" }}>
+                                    {uf.alerta
+                                      ? <span style={{ background: uf.pctVariacao >= thresholdPct*2 ? "#DC2626" : "#D97706", color:"#fff", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>
+                                          {uf.pctVariacao >= thresholdPct*2 ? "CRÍTICO" : "ALERTA"}
+                                        </span>
+                                      : <span style={{ background:"#DCFCE7", color:"#166534", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>OK</span>
+                                    }
+                                  </td>
+                                </tr>
+
+                                {/* Nível 2: por Semana */}
+                                {aberto && semanas.map(sem => {
+                                  const chSem = `${uf.uf}|${sem.sem}`;
+                                  const abertoSem = expandidosRetro.has(chSem);
+                                  return (
+                                    <React.Fragment key={chSem}>
+                                      <tr onClick={()=>setExpandidosRetro(prev => {
+                                          const n = new Set(prev); abertoSem ? n.delete(chSem) : n.add(chSem); return n;
+                                        })}
+                                        style={{ borderTop:`1px solid ${C.cinzaBorda}`, cursor:"pointer", background:"#F8F7F4" }}>
+                                        <td />
+                                        <td style={{ padding:"6px 10px 6px 28px", color:C.cinzaTexto }}>{abertoSem ? "▾" : "▸"}</td>
+                                        <td style={{ padding:"6px 10px", fontWeight:600 }} colSpan={2}>
+                                          {sem.sem.replace("|", " · ")} — {sem.linhas.length} linha(s)
+                                        </td>
+                                        <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:600,
+                                          color: sem.deltaTotal > 0 ? C.verde : sem.deltaTotal < 0 ? C.vermelho : C.cinzaTexto }}>
+                                          {sem.deltaTotal > 0 ? "+" : ""}{sem.deltaTotal.toLocaleString("pt-BR")}
+                                        </td>
+                                        <td colSpan={2} />
+                                      </tr>
+
+                                      {/* Nível 3: por Cidade/Transportadora */}
+                                      {abertoSem && sem.linhas.map((linha, li) => {
+                                        const ref = linha.depois || linha.antes;
+                                        return (
+                                          <tr key={li} style={{ borderTop:`1px solid ${C.cinzaBorda}`, background:"#fff" }}>
+                                            <td colSpan={2} />
+                                            <td style={{ padding:"5px 10px 5px 44px", fontSize:12 }}>{ref.cidade}</td>
+                                            <td style={{ padding:"5px 10px", fontSize:12 }}>{ref.transportadora}</td>
+                                            <td style={{ padding:"5px 10px", textAlign:"right", fontSize:12, fontWeight:600,
+                                              color: linha.delta > 0 ? C.verde : linha.delta < 0 ? C.vermelho : C.cinzaTexto }}>
+                                              {linha.antes ? `${linha.antes.abrangencia} → ${linha.depois?.abrangencia ?? 0}` : `+ ${linha.depois.abrangencia}`}
+                                              {" "}({linha.delta > 0 ? "+" : ""}{linha.delta})
+                                            </td>
+                                            <td style={{ padding:"5px 10px", fontSize:11, color:C.cinzaTexto }}>
+                                              {linha.tipo}
+                                            </td>
+                                            <td style={{ padding:"5px 10px", fontSize:11 }}>
+                                              {linha.pctDelta !== null && linha.pctDelta >= thresholdPct &&
+                                                <span style={{ background:"#FEF3C7", color:"#92400E", borderRadius:4, padding:"1px 6px", fontWeight:600 }}>
+                                                  {linha.pctDelta.toFixed(0)}%
+                                                </span>
+                                              }
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </>
               )}
             </div>
