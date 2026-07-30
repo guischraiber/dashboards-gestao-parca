@@ -2054,16 +2054,36 @@ function resumoPorUF(linhas) {
 }
 
 function calcularOportunidades(linhas) {
-  const pc = new Map();
-  linhas.forEach(r=>{
-    const k=`${r.estado}|${normalizarCidade(r.cidade)}`;
-    if (!pc.has(k)) pc.set(k,{estado:r.estado,cidade:r.cidade,temParca:false,abrangencia:0,transportadoras:new Set()});
-    const c=pc.get(k); c.abrangencia+=r.abrangencia;
-    if (r.validacao==="PARÇA") c.temParca=true; else c.transportadoras.add(r.transportadora);
+  // 1. Encontra a data da coleta mais recente de cada cidade
+  const ultimaDataPorCidade = new Map();
+  linhas.forEach(r => {
+    const k = `${r.estado}|${normalizarCidade(r.cidade)}`;
+    const dataKey = r.dataColeta || `${r.ano||0}-${String(r.mes||0).padStart(2,"0")}-${String(r.semana||0).padStart(2,"0")}`;
+    if (!ultimaDataPorCidade.has(k) || dataKey > ultimaDataPorCidade.get(k)) {
+      ultimaDataPorCidade.set(k, dataKey);
+    }
   });
-  return [...pc.values()].filter(c=>!c.temParca)
-    .sort((a,b)=>b.abrangencia-a.abrangencia)
-    .map(c=>({...c, transportadoras:[...c.transportadoras].join(", ")}));
+
+  // 2. Pra cada cidade, só olha as linhas da data mais recente pra definir se tem Parça
+  const pc = new Map();
+  linhas.forEach(r => {
+    const k = `${r.estado}|${normalizarCidade(r.cidade)}`;
+    const dataKey = r.dataColeta || `${r.ano||0}-${String(r.mes||0).padStart(2,"0")}-${String(r.semana||0).padStart(2,"0")}`;
+    const ultimaData = ultimaDataPorCidade.get(k);
+
+    if (!pc.has(k)) pc.set(k, { estado: r.estado, cidade: r.cidade, temParca: false, abrangencia: 0, transportadoras: new Set() });
+    const c = pc.get(k);
+    c.abrangencia += r.abrangencia;
+    // Só a última coleta define se a cidade tem Parça ou não
+    if (dataKey === ultimaData) {
+      if (r.validacao === "PARÇA") c.temParca = true;
+      else c.transportadoras.add(r.transportadora);
+    }
+  });
+
+  return [...pc.values()].filter(c => !c.temParca)
+    .sort((a, b) => b.abrangencia - a.abrangencia)
+    .map(c => ({ ...c, transportadoras: [...c.transportadoras].join(", ") }));
 }
 
 function corDoBloco(d) {
@@ -2117,6 +2137,7 @@ export default function AbrangenciaApp() {
 
   // ── Estado de Oportunidades
   const [fOpEstado, setFOpEstado] = useState("Todos");
+  const [fOpCidade, setFOpCidade] = useState("");
 
   // ── Evolução
   const [evolGranularidade, setEvolGranularidade] = useState("semana"); // semana | mes
@@ -2310,13 +2331,22 @@ export default function AbrangenciaApp() {
   }, [atual, ufSelecionada, fMapaValidacao]);
 
   // Oportunidades filtradas por estado
-  const oportunidadesFiltradas = useMemo(() =>
-    fOpEstado==="Todos" ? oportunidades : oportunidades.filter(o=>o.estado===fOpEstado)
-  , [oportunidades, fOpEstado]);
+  const oportunidadesFiltradas = useMemo(() => {
+    let lista = oportunidades;
+    if (fOpEstado !== "Todos") lista = lista.filter(o => o.estado === fOpEstado);
+    if (fOpCidade) lista = lista.filter(o => normalizarCidade(o.cidade).includes(normalizarCidade(fOpCidade)));
+    return lista;
+  }, [oportunidades, fOpEstado, fOpCidade]);
 
   const estadosOportunidade = useMemo(() =>
     [...new Set(oportunidades.map(o=>o.estado))].sort()
   , [oportunidades]);
+
+  // Lista de cidades disponíveis pro filtro (respeitando o estado selecionado)
+  const cidadesOportunidade = useMemo(() => {
+    const base = fOpEstado === "Todos" ? oportunidades : oportunidades.filter(o => o.estado === fOpEstado);
+    return [...new Set(base.map(o => o.cidade))].sort();
+  }, [oportunidades, fOpEstado]);
 
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
@@ -2566,15 +2596,28 @@ export default function AbrangenciaApp() {
                 Cidades sem <strong>nenhuma transportadora Parça</strong>, ordenadas pelo volume de coletas que passa por transportadoras não-parceiras.
               </div>
 
-              {/* Filtro por estado */}
+              {/* Filtros */}
               <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
                 <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Estado:</span>
-                <select value={fOpEstado} onChange={e=>setFOpEstado(e.target.value)}
+                <select value={fOpEstado} onChange={e=>{setFOpEstado(e.target.value);setFOpCidade("");}}
                   style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fOpEstado!=="Todos"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fOpEstado!=="Todos"?C.laranja:C.cinzaTexto }}>
                   <option value="Todos">Todos os estados</option>
                   {estadosOportunidade.map(e=><option key={e} value={e}>{e}</option>)}
                 </select>
-                {fOpEstado!=="Todos" && <button onClick={()=>setFOpEstado("Todos")} style={sq()}>Limpar</button>}
+                <div style={{ width:1, height:20, background:C.cinzaBorda }} />
+                <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Cidade:</span>
+                <input type="text" value={fOpCidade} onChange={e=>setFOpCidade(e.target.value)}
+                  placeholder="Buscar cidade..."
+                  list="cidades-oportunidade-list"
+                  style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fOpCidade?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, color:fOpCidade?C.laranja:C.cinzaTexto, width:200 }} />
+                <datalist id="cidades-oportunidade-list">
+                  {cidadesOportunidade.map(c=><option key={c} value={c} />)}
+                </datalist>
+                {(fOpEstado!=="Todos"||fOpCidade) && <button onClick={()=>{setFOpEstado("Todos");setFOpCidade("");}} style={sq()}>Limpar filtros</button>}
+              </div>
+
+              <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:14 }}>
+                A cobertura Parça de cada cidade é definida pela <strong>última coleta registrada</strong> — se a coleta mais recente não tem transportadora Parça, a cidade aparece como oportunidade.
               </div>
 
               {oportunidadesFiltradas.length===0 ? (
@@ -2623,7 +2666,7 @@ export default function AbrangenciaApp() {
                   )}
 
                   <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>
-                    {fOpEstado==="Todos" ? `Top ${Math.min(30,oportunidadesFiltradas.length)} cidades por volume` : `Cidades de ${fOpEstado} sem Parça`}
+                    {fOpCidade ? `Cidades com "${fOpCidade}" no nome` : fOpEstado==="Todos" ? `Top ${Math.min(30,oportunidadesFiltradas.length)} cidades por volume` : `Cidades de ${fOpEstado} sem Parça`}
                   </div>
                   <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
                     <thead>
@@ -2637,7 +2680,7 @@ export default function AbrangenciaApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(fOpEstado==="Todos"?oportunidadesFiltradas.slice(0,30):oportunidadesFiltradas).map((o,i)=>(
+                      {(fOpEstado==="Todos"&&!fOpCidade?oportunidadesFiltradas.slice(0,30):oportunidadesFiltradas).map((o,i)=>(
                         <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
                           <td style={{ padding:"4px 6px", color:C.cinzaTexto }}>{i+1}</td>
                           <td style={{ padding:"4px 6px" }}>{o.estado}</td>
