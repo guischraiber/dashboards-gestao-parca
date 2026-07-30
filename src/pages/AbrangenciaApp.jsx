@@ -2102,12 +2102,14 @@ export default function AbrangenciaApp() {
   const [loading,  setLoading]  = useState("");
   const [erro,     setErro]     = useState("");
   const [avisoPersist, setAvisoPersist] = useState(false);
-  const [thresholdPct, setThresholdPct] = useState(10); // % para alertas retroativos
-  const [expandidosRetro, setExpandidosRetro] = useState(new Set()); // estados expandidos na tabela
+  const [thresholdPct, setThresholdPct] = useState(10);
+  const [expandidosRetro, setExpandidosRetro] = useState(new Set());
 
-  // ── Estado dos filtros da Visão Geral
-  const [fgValidacao, setFgValidacao] = useState("Todos"); // Todos | PARÇA | NÃO PARÇA
+  // ── Filtros globais de período (usados em Visão Geral e Mapa)
+  const [fgValidacao, setFgValidacao] = useState("Todos");
   const [fgEstado,    setFgEstado]    = useState("Todos");
+  const [fgSemana,    setFgSemana]    = useState("Todas");
+  const [fgMes,       setFgMes]       = useState("Todos");
 
   // ── Estado do mapa
   const [ufSelecionada,  setUfSelecionada]  = useState(null);
@@ -2115,6 +2117,9 @@ export default function AbrangenciaApp() {
 
   // ── Estado de Oportunidades
   const [fOpEstado, setFOpEstado] = useState("Todos");
+
+  // ── Evolução
+  const [evolGranularidade, setEvolGranularidade] = useState("semana"); // semana | mes
 
   useEffect(() => {
     (async () => {
@@ -2195,14 +2200,35 @@ export default function AbrangenciaApp() {
     atual ? [...new Set(atual.rows.map(r=>r.estado))].sort() : [],
   [atual]);
 
-  // Filtro Visão Geral
+  // Semanas e meses disponíveis na base atual
+  const semanasDisponiveis = useMemo(() => {
+    if (!atual) return [];
+    return [...new Set(atual.rows.filter(r=>r.semana).map(r=>r.semana))].sort((a,b)=>a-b);
+  }, [atual]);
+  const mesesDisponiveis = useMemo(() => {
+    if (!atual) return [];
+    return [...new Set(atual.rows.filter(r=>r.mes).map(r=>r.mes))].sort((a,b)=>a-b);
+  }, [atual]);
+
+  // Filtro Visão Geral (agora com semana e mês)
   const rowsFiltradas = useMemo(() => {
     if (!atual) return [];
     return atual.rows.filter(r =>
       (fgValidacao==="Todos" || r.validacao===fgValidacao) &&
-      (fgEstado   ==="Todos" || r.estado   ===fgEstado)
+      (fgEstado   ==="Todos" || r.estado   ===fgEstado) &&
+      (fgSemana   ==="Todas" || r.semana===parseInt(fgSemana)) &&
+      (fgMes      ==="Todos" || r.mes===parseInt(fgMes))
     );
-  }, [atual, fgValidacao, fgEstado]);
+  }, [atual, fgValidacao, fgEstado, fgSemana, fgMes]);
+
+  // Rows filtradas para o mapa (mesmos filtros)
+  const rowsParaMapa = useMemo(() => {
+    if (!atual) return [];
+    return atual.rows.filter(r =>
+      (fgSemana==="Todas" || r.semana===parseInt(fgSemana)) &&
+      (fgMes   ==="Todos" || r.mes===parseInt(fgMes))
+    );
+  }, [atual, fgSemana, fgMes]);
 
   const totais = useMemo(() => {
     if (!atual) return null;
@@ -2224,6 +2250,44 @@ export default function AbrangenciaApp() {
       abrangenciaTotal, abrangenciaParca,
     };
   }, [rowsFiltradas]);
+
+  // Cobertura da base anterior (pra comparar na Visão Geral)
+  const coberturaAnterior = useMemo(() => {
+    if (!anterior) return null;
+    const total = anterior.rows.reduce((s,r)=>s+r.abrangencia, 0);
+    const parca = anterior.rows.filter(r=>r.validacao==="PARÇA").reduce((s,r)=>s+r.abrangencia, 0);
+    return { pct: total ? (parca/total)*100 : 0, total, parca };
+  }, [anterior]);
+
+  // ── Evolução semana a semana / mês a mês ─────────────────────────────────
+  const evolucao = useMemo(() => {
+    if (!atual) return [];
+    const agrupamento = evolGranularidade === "semana"
+      ? (r) => r.semana ? `S${r.semana}` : null
+      : (r) => r.mes ? `M${String(r.mes).padStart(2,"0")}` : null;
+    const sortKey = evolGranularidade === "semana"
+      ? (k) => parseInt(k.slice(1))
+      : (k) => parseInt(k.slice(1));
+
+    const mapa = new Map();
+    atual.rows.forEach(r => {
+      const chave = agrupamento(r);
+      if (!chave) return;
+      if (!mapa.has(chave)) mapa.set(chave, { periodo: chave, total: 0, parca: 0 });
+      const m = mapa.get(chave);
+      m.total += r.abrangencia;
+      if (r.validacao === "PARÇA") m.parca += r.abrangencia;
+    });
+    return [...mapa.values()]
+      .sort((a,b) => sortKey(a.periodo) - sortKey(b.periodo))
+      .map(p => ({ ...p, pct: p.total > 0 ? (p.parca / p.total * 100) : 0 }));
+  }, [atual, evolGranularidade]);
+
+  // Total geral (sem filtro) pra calcular % representatividade nas oportunidades
+  const totalGeralAbrangencia = useMemo(() => {
+    if (!atual) return 0;
+    return atual.rows.reduce((s,r) => s + r.abrangencia, 0);
+  }, [atual]);
 
   const resumoUF = useMemo(() => atual ? resumoPorUF(atual.rows) : {}, [atual]);
 
@@ -2253,11 +2317,6 @@ export default function AbrangenciaApp() {
   const estadosOportunidade = useMemo(() =>
     [...new Set(oportunidades.map(o=>o.estado))].sort()
   , [oportunidades]);
-
-  const comparacao = useMemo(() => {
-    if (!atual||!anterior) return null;
-    return compararDatasets(anterior.rows, atual.rows);
-  }, [atual, anterior]);
 
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
@@ -2307,7 +2366,7 @@ export default function AbrangenciaApp() {
 
           {/* ── Abas ── */}
           <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["oportunidades","🎯 Oportunidades"],["retroativos","⚠️ Retroativos"],["comparacao","🔄 Comparação"]].map(([k,l])=>(
+            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","⚠️ Retroativos"]].map(([k,l])=>(
               <button key={k} onClick={()=>setAba(k)} style={{
                 padding:"8px 16px", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer",
                 border:`1.5px solid ${aba===k?C.laranja:C.cinzaBorda}`,
@@ -2326,13 +2385,24 @@ export default function AbrangenciaApp() {
                 {["Todos","PARÇA","NÃO PARÇA"].map(v=>(
                   <Pill key={v} ativo={fgValidacao===v} onClick={()=>setFgValidacao(v)}>{v}</Pill>
                 ))}
+                <div style={{ width:1, height:20, background:C.cinzaBorda }} />
                 <select value={fgEstado} onChange={e=>setFgEstado(e.target.value)}
                   style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fgEstado!=="Todos"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fgEstado!=="Todos"?C.laranja:C.cinzaTexto }}>
                   <option value="Todos">Todos os estados</option>
                   {estadosDisponiveis.map(e=><option key={e} value={e}>{e}</option>)}
                 </select>
-                {(fgValidacao!=="Todos"||fgEstado!=="Todos") && (
-                  <button onClick={()=>{setFgValidacao("Todos");setFgEstado("Todos");}} style={sq()}>Limpar filtros</button>
+                <select value={fgSemana} onChange={e=>setFgSemana(e.target.value)}
+                  style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fgSemana!=="Todas"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fgSemana!=="Todas"?C.laranja:C.cinzaTexto }}>
+                  <option value="Todas">Todas as semanas</option>
+                  {semanasDisponiveis.map(s=><option key={s} value={s}>S{s}</option>)}
+                </select>
+                <select value={fgMes} onChange={e=>setFgMes(e.target.value)}
+                  style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fgMes!=="Todos"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fgMes!=="Todos"?C.laranja:C.cinzaTexto }}>
+                  <option value="Todos">Todos os meses</option>
+                  {mesesDisponiveis.map(m=><option key={m} value={m}>Mês {m}</option>)}
+                </select>
+                {(fgValidacao!=="Todos"||fgEstado!=="Todos"||fgSemana!=="Todas"||fgMes!=="Todos") && (
+                  <button onClick={()=>{setFgValidacao("Todos");setFgEstado("Todos");setFgSemana("Todas");setFgMes("Todos");}} style={sq()}>Limpar filtros</button>
                 )}
               </div>
 
@@ -2342,25 +2412,150 @@ export default function AbrangenciaApp() {
                 <Kpi label="Cidades atendidas" valor={totais.cidades.toLocaleString("pt-BR")} />
                 <Kpi label="Estados" valor={totais.estados.toLocaleString("pt-BR")} />
                 <Kpi label="Transportadoras" valor={totais.transportadoras.toLocaleString("pt-BR")} />
-                <Kpi label="% transportadoras que são Parça" valor={`${totais.pctTranspParca.toFixed(1)}%`}
+                <Kpi label="% transportadoras Parça" valor={`${totais.pctTranspParca.toFixed(1)}%`}
                   sub={`${totais.transportadorasParca} de ${totais.transportadoras}`}
                   cor={totais.pctTranspParca>=50?C.verde:C.vermelho} />
               </div>
 
-              {/* Card cobertura ponderada */}
-              <div style={{ background:C.cinzaCard, border:`2px solid ${C.laranja}`, borderRadius:12, padding:20, maxWidth:380 }}>
-                <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>Cobertura Parça</div>
-                <div style={{ fontSize:36, fontWeight:700, color:totais.pctPonderada>=50?C.verde:C.vermelho }}>{totais.pctPonderada.toFixed(1)}%</div>
-                <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:4 }}>
-                  {totais.abrangenciaParca.toLocaleString("pt-BR")} de {totais.abrangenciaTotal.toLocaleString("pt-BR")} de Abrangência em atendimentos Parça
+              {/* Card cobertura + comparação com anterior */}
+              <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:16 }}>
+                <div style={{ background:C.cinzaCard, border:`2px solid ${C.laranja}`, borderRadius:12, padding:20, minWidth:280 }}>
+                  <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>Cobertura Parça (atual)</div>
+                  <div style={{ fontSize:36, fontWeight:700, color:totais.pctPonderada>=50?C.verde:C.vermelho }}>{totais.pctPonderada.toFixed(1)}%</div>
+                  <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:4 }}>
+                    {totais.abrangenciaParca.toLocaleString("pt-BR")} de {totais.abrangenciaTotal.toLocaleString("pt-BR")} coletas
+                  </div>
                 </div>
+
+                {coberturaAnterior && (
+                  <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20, minWidth:280 }}>
+                    <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>Cobertura Parça (importação anterior)</div>
+                    <div style={{ fontSize:36, fontWeight:700, color:coberturaAnterior.pct>=50?C.verde:C.vermelho }}>{coberturaAnterior.pct.toFixed(1)}%</div>
+                    <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:4 }}>
+                      {coberturaAnterior.parca.toLocaleString("pt-BR")} de {coberturaAnterior.total.toLocaleString("pt-BR")} coletas
+                    </div>
+                  </div>
+                )}
+
+                {coberturaAnterior && (
+                  <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20, minWidth:200, display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                    <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>Variação</div>
+                    {(() => {
+                      const delta = totais.pctPonderada - coberturaAnterior.pct;
+                      const cor = delta > 0 ? C.verde : delta < 0 ? C.vermelho : C.cinzaTexto;
+                      return (
+                        <>
+                          <div style={{ fontSize:30, fontWeight:700, color:cor }}>
+                            {delta > 0 ? "+" : ""}{delta.toFixed(2)} p.p.
+                          </div>
+                          <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:4 }}>
+                            {delta > 0 ? "Cobertura aumentou" : delta < 0 ? "Cobertura diminuiu" : "Sem variação"}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </>
           )}
 
           {/* ══ MAPA ══ */}
           {aba==="mapa" && (
-            <MapaAbrangencia rows={atual.rows} coordCidades={COORD_CIDADES} />
+            <>
+              {/* Filtros de período pro mapa */}
+              <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+                <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Período no mapa:</span>
+                <select value={fgSemana} onChange={e=>setFgSemana(e.target.value)}
+                  style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fgSemana!=="Todas"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fgSemana!=="Todas"?C.laranja:C.cinzaTexto }}>
+                  <option value="Todas">Todas as semanas</option>
+                  {semanasDisponiveis.map(s=><option key={s} value={s}>S{s}</option>)}
+                </select>
+                <select value={fgMes} onChange={e=>setFgMes(e.target.value)}
+                  style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fgMes!=="Todos"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fgMes!=="Todos"?C.laranja:C.cinzaTexto }}>
+                  <option value="Todos">Todos os meses</option>
+                  {mesesDisponiveis.map(m=><option key={m} value={m}>Mês {m}</option>)}
+                </select>
+                {(fgSemana!=="Todas"||fgMes!=="Todos") && (
+                  <button onClick={()=>{setFgSemana("Todas");setFgMes("Todos");}} style={sq()}>Limpar</button>
+                )}
+                {(fgSemana!=="Todas"||fgMes!=="Todos") && (
+                  <span style={{ fontSize:11, color:C.cinzaTexto }}>Mostrando {rowsParaMapa.length.toLocaleString("pt-BR")} de {atual.rows.length.toLocaleString("pt-BR")} linhas</span>
+                )}
+              </div>
+              <MapaAbrangencia rows={rowsParaMapa} coordCidades={COORD_CIDADES} />
+            </>
+          )}
+
+          {/* ══ EVOLUÇÃO ══ */}
+          {aba==="evolucao" && (
+            <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:15 }}>📈 Evolução da Cobertura Parça</div>
+                  <div style={{ fontSize:12, color:C.cinzaTexto }}>Como a cobertura evoluiu ao longo do tempo (% de coletas com transportadora Parça)</div>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <Pill ativo={evolGranularidade==="semana"} onClick={()=>setEvolGranularidade("semana")}>Por semana</Pill>
+                  <Pill ativo={evolGranularidade==="mes"} onClick={()=>setEvolGranularidade("mes")}>Por mês</Pill>
+                </div>
+              </div>
+
+              {evolucao.length === 0 ? (
+                <div style={{ color:C.cinzaTexto, fontSize:13 }}>Sem dados de período — a planilha precisa ter a coluna "Logistica Reversa Data Coleta Efetivada" preenchida.</div>
+              ) : (
+                <>
+                  {/* Barra visual simples (sem Recharts pra não adicionar dependência) */}
+                  <div style={{ overflowX:"auto" }}>
+                    <div style={{ display:"flex", gap:2, alignItems:"flex-end", minWidth:evolucao.length*50, height:220, padding:"0 4px" }}>
+                      {evolucao.map((p,i) => {
+                        const altMax = 180;
+                        const alt = Math.round((p.pct / 100) * altMax);
+                        const cor = p.pct >= 75 ? C.verde : p.pct >= 40 ? "#84CC16" : p.pct > 0 ? C.laranja : C.vermelho;
+                        return (
+                          <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", flex:"1 0 40px", maxWidth:80 }}
+                            title={`${p.periodo}: ${p.pct.toFixed(1)}% Parça · ${p.parca.toLocaleString("pt-BR")} de ${p.total.toLocaleString("pt-BR")} coletas`}>
+                            <div style={{ fontSize:10, fontWeight:700, color:cor, marginBottom:2 }}>{p.pct.toFixed(0)}%</div>
+                            <div style={{ width:"70%", height:alt, background:cor, borderRadius:"4px 4px 0 0", minHeight:2 }} />
+                            <div style={{ fontSize:9, color:C.cinzaTexto, marginTop:4, textAlign:"center" }}>{p.periodo}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Tabela detalhada */}
+                  <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse", marginTop:20 }}>
+                    <thead>
+                      <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                        <th style={{ padding:"6px 8px" }}>Período</th>
+                        <th style={{ padding:"6px 8px", textAlign:"right" }}>Coletas totais</th>
+                        <th style={{ padding:"6px 8px", textAlign:"right" }}>Coletas Parça</th>
+                        <th style={{ padding:"6px 8px", textAlign:"right" }}>% Cobertura</th>
+                        <th style={{ padding:"6px 8px", textAlign:"right" }}>Δ vs anterior</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {evolucao.map((p,i) => {
+                        const prev = i > 0 ? evolucao[i-1].pct : null;
+                        const delta = prev !== null ? p.pct - prev : null;
+                        return (
+                          <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                            <td style={{ padding:"6px 8px", fontWeight:600 }}>{p.periodo}</td>
+                            <td style={{ padding:"6px 8px", textAlign:"right" }}>{p.total.toLocaleString("pt-BR")}</td>
+                            <td style={{ padding:"6px 8px", textAlign:"right" }}>{p.parca.toLocaleString("pt-BR")}</td>
+                            <td style={{ padding:"6px 8px", textAlign:"right", fontWeight:700, color:p.pct>=50?C.verde:C.vermelho }}>{p.pct.toFixed(1)}%</td>
+                            <td style={{ padding:"6px 8px", textAlign:"right", color:delta===null?C.cinzaTexto:delta>=0?C.verde:C.vermelho, fontWeight:600 }}>
+                              {delta === null ? "—" : `${delta>=0?"+":""}${delta.toFixed(2)} p.p.`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
           )}
 
           {/* ══ OPORTUNIDADES ══ */}
@@ -2368,7 +2563,7 @@ export default function AbrangenciaApp() {
             <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
               <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>🎯 Onde priorizar novos parceiros</div>
               <div style={{ fontSize:13, color:C.cinzaTexto, marginBottom:16, lineHeight:1.5 }}>
-                Cidades sem <strong>nenhuma transportadora Parça</strong>, ordenadas pelo volume (Abrangência) que passa por transportadoras não-parceiras.
+                Cidades sem <strong>nenhuma transportadora Parça</strong>, ordenadas pelo volume de coletas que passa por transportadoras não-parceiras.
               </div>
 
               {/* Filtro por estado */}
@@ -2386,11 +2581,20 @@ export default function AbrangenciaApp() {
                 <div style={{ fontSize:13, color:C.verde, fontWeight:600 }}>✓ Todas as cidades já têm pelo menos uma opção Parça.</div>
               ) : (
                 <>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
-                    <Kpi label="Cidades sem nenhuma opção Parça" valor={oportunidadesFiltradas.length.toLocaleString("pt-BR")} cor={C.vermelho} />
-                    <Kpi label="Volume de coletas em jogo" valor={oportunidadesFiltradas.reduce((s,o)=>s+o.abrangencia,0).toLocaleString("pt-BR")} cor={C.amarelo} />
-                    <Kpi label="Estados envolvidos" valor={[...new Set(oportunidadesFiltradas.map(o=>o.estado))].length} />
-                  </div>
+                  {(() => {
+                    const volOp = oportunidadesFiltradas.reduce((s,o)=>s+o.abrangencia,0);
+                    const pctDoTotal = totalGeralAbrangencia > 0 ? (volOp / totalGeralAbrangencia * 100) : 0;
+                    return (
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:20 }}>
+                        <Kpi label="Cidades sem opção Parça" valor={oportunidadesFiltradas.length.toLocaleString("pt-BR")} cor={C.vermelho} />
+                        <Kpi label="Volume de coletas em jogo" valor={volOp.toLocaleString("pt-BR")} cor={C.amarelo} />
+                        <Kpi label="% do total geral" valor={`${pctDoTotal.toFixed(1)}%`}
+                          sub={`de ${totalGeralAbrangencia.toLocaleString("pt-BR")} coletas totais`}
+                          cor={C.amarelo} />
+                        <Kpi label="Estados envolvidos" valor={[...new Set(oportunidadesFiltradas.map(o=>o.estado))].length} />
+                      </div>
+                    );
+                  })()}
 
                   {fOpEstado==="Todos" && (
                     <>
@@ -2400,6 +2604,7 @@ export default function AbrangenciaApp() {
                           <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
                             <th style={{ padding:"4px 6px" }}>Estado</th>
                             <th style={{ padding:"4px 6px", textAlign:"right" }}>Volume sem Parça</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>% do total geral</th>
                             <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades</th>
                           </tr>
                         </thead>
@@ -2408,6 +2613,7 @@ export default function AbrangenciaApp() {
                             <tr key={uf} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
                               <td style={{ padding:"4px 6px", fontWeight:600 }}>{topOportunidadeUFs.has(uf)&&"🎯 "}{uf}</td>
                               <td style={{ padding:"4px 6px", textAlign:"right" }}>{v.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", color:C.amarelo, fontWeight:600 }}>{totalGeralAbrangencia > 0 ? (v/totalGeralAbrangencia*100).toFixed(2) : 0}%</td>
                               <td style={{ padding:"4px 6px", textAlign:"right" }}>{oportunidades.filter(o=>o.estado===uf).length}</td>
                             </tr>
                           ))}
@@ -2426,6 +2632,7 @@ export default function AbrangenciaApp() {
                         <th style={{ padding:"4px 6px" }}>Estado</th>
                         <th style={{ padding:"4px 6px" }}>Cidade</th>
                         <th style={{ padding:"4px 6px", textAlign:"right" }}>Coletas ↓</th>
+                        <th style={{ padding:"4px 6px", textAlign:"right" }}>% do total</th>
                         <th style={{ padding:"4px 6px" }}>Transportadora(s) atual(is)</th>
                       </tr>
                     </thead>
@@ -2436,6 +2643,7 @@ export default function AbrangenciaApp() {
                           <td style={{ padding:"4px 6px" }}>{o.estado}</td>
                           <td style={{ padding:"4px 6px" }}>{o.cidade}</td>
                           <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:C.vermelho }}>{o.abrangencia.toLocaleString("pt-BR")}</td>
+                          <td style={{ padding:"4px 6px", textAlign:"right", color:C.cinzaTexto }}>{totalGeralAbrangencia > 0 ? (o.abrangencia/totalGeralAbrangencia*100).toFixed(2) : 0}%</td>
                           <td style={{ padding:"4px 6px" }}>{o.transportadoras}</td>
                         </tr>
                       ))}
@@ -2627,54 +2835,6 @@ export default function AbrangenciaApp() {
           )}
 
           {/* ══ COMPARAÇÃO ══ */}
-          {aba==="comparacao" && (
-            <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
-              {!anterior ? (
-                <div style={{ color:C.cinzaTexto, fontSize:13 }}>Ainda não há planilha anterior pra comparar — aparece automaticamente a partir da segunda importação.</div>
-              ) : (
-                <>
-                  <div style={{ fontSize:13, color:C.cinzaTexto, marginBottom:14 }}>
-                    Comparando <strong>{anterior.nome}</strong> (anterior) com <strong>{atual.nome}</strong> (atual).
-                  </div>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
-                    <Kpi label="Atendimentos novos"     valor={comparacao.novas.length}    cor={C.verde}    />
-                    <Kpi label="Atendimentos removidos" valor={comparacao.removidas.length} cor={C.vermelho} />
-                    <Kpi label="Atendimentos alterados" valor={comparacao.mudancas.length}  cor={C.amarelo}  />
-                  </div>
-                  {comparacao.novas.length>0    && <TabelaSimples titulo="✅ Novos atendimentos"      linhas={comparacao.novas} />}
-                  {comparacao.removidas.length>0 && <TabelaSimples titulo="❌ Atendimentos removidos"  linhas={comparacao.removidas} />}
-                  {comparacao.mudancas.length>0  && (
-                    <div style={{ marginTop:20 }}>
-                      <div style={{ fontWeight:700, marginBottom:8, fontSize:13 }}>🔁 Atendimentos que mudaram</div>
-                      <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
-                        <thead>
-                          <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
-                            <th style={{ padding:"4px 6px" }}>Cidade</th>
-                            <th style={{ padding:"4px 6px" }}>Transportadora</th>
-                            <th style={{ padding:"4px 6px" }}>Validação (antes → depois)</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Abrangência (antes → depois)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {comparacao.mudancas.map((m,i)=>(
-                            <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
-                              <td style={{ padding:"4px 6px" }}>{m.depois.estado} — {m.depois.cidade}</td>
-                              <td style={{ padding:"4px 6px" }}>{m.depois.transportadora}</td>
-                              <td style={{ padding:"4px 6px" }}>{m.antes.validacao} → {m.depois.validacao}</td>
-                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{m.antes.abrangencia} → {m.depois.abrangencia}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {!comparacao.novas.length && !comparacao.removidas.length && !comparacao.mudancas.length && (
-                    <div style={{ color:C.cinzaTexto, fontSize:13 }}>Nenhuma diferença encontrada.</div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
         </>
       )}
     </div>
