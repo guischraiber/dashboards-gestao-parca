@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { MapContainer, TileLayer, GeoJSON, CircleMarker, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -47,6 +47,33 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
   const [ufFoco,        setUfFoco]        = useState(null);
   const [resetKey,      setResetKey]      = useState(0);
 
+  // ── Lista de cidades selecionadas para exportação ─────────────────────────
+  const [cidadesSelecionadas, setCidadesSelecionadas] = useState(new Map()); // key → {uf,cidade,coletasTotal,coletasParca}
+
+  const toggleCidade = useCallback((p) => {
+    setCidadesSelecionadas(prev => {
+      const novo = new Map(prev);
+      const key = `${p.uf}|${p.cidade}`;
+      if (novo.has(key)) novo.delete(key);
+      else novo.set(key, { uf: p.uf, cidade: p.cidade, coletasTotal: p.coletasTotal, coletasParca: p.coletasParca, pct: p.pct });
+      return novo;
+    });
+  }, []);
+
+  const exportarSelecionadas = useCallback(() => {
+    const linhas = [
+      "Estado,Cidade,Coletas totais,Coletas Parça,% Cobertura",
+      ...[...cidadesSelecionadas.values()].map(c =>
+        `${c.uf},${c.cidade},${c.coletasTotal},${c.coletasParca},${(c.pct*100).toFixed(1)}%`
+      )
+    ].join("\n");
+    const blob = new Blob([linhas], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "cidades-selecionadas.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }, [cidadesSelecionadas]);
+
   // ── Agrega por cidade ──────────────────────────────────────────────────────
   const pontos = useMemo(() => {
     const mapa = new Map();
@@ -56,16 +83,25 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       if (!coord) return;
       if (!mapa.has(key)) {
         mapa.set(key, { uf: r.estado, cidade: r.cidade, lat: coord[0], lon: coord[1],
-          coletasTotal: 0, coletasParca: 0, temParca: false });
+          coletasTotal: 0, coletasParca: 0, temParca: false,
+          transpParca: new Set(), transpNaoParca: new Set() });
       }
       const p = mapa.get(key);
       p.coletasTotal += r.abrangencia;
-      if (r.validacao === "PARÇA") { p.coletasParca += r.abrangencia; p.temParca = true; }
+      if (r.validacao === "PARÇA") {
+        p.coletasParca += r.abrangencia;
+        p.temParca = true;
+        p.transpParca.add(r.transportadora);
+      } else {
+        p.transpNaoParca.add(r.transportadora);
+      }
     });
     return [...mapa.values()].map(p => ({
       ...p,
       pct: p.coletasTotal > 0 ? p.coletasParca / p.coletasTotal : 0,
       raio: Math.min(22, Math.max(4, Math.sqrt(p.coletasTotal) * 0.6)),
+      transpParca: [...p.transpParca].join(", "),
+      transpNaoParca: [...p.transpNaoParca].join(", "),
     }));
   }, [rows, coordCidades]);
 
@@ -181,29 +217,38 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           {/* Pontos das cidades — menores primeiro (debaixo) */}
           {[...pontosFiltrados]
             .sort((a, b) => a.coletasTotal - b.coletasTotal)
-            .map((p, i) => (
-              <CircleMarker
-                key={i}
-                center={[p.lat, p.lon]}
-                radius={p.raio}
-                pathOptions={{
-                  fillColor: corPonto(p.pct),
-                  fillOpacity: 0.82,
-                  color: "#fff",
-                  weight: 0.8,
-                }}
-                eventHandlers={{ click: () => setUfFoco(p.uf) }}
-              >
-                <Tooltip direction="top" offset={[0,-4]} opacity={0.97}>
-                  <div style={{ fontFamily:"Arial,sans-serif", minWidth:160 }}>
-                    <div style={{ fontWeight:700, fontSize:13, marginBottom:4 }}>{p.cidade} — {p.uf}</div>
-                    <div style={{ fontSize:12 }}>Coletas totais: <strong>{p.coletasTotal.toLocaleString("pt-BR")}</strong></div>
-                    <div style={{ fontSize:12 }}>Coletas Parça: <strong>{p.coletasParca.toLocaleString("pt-BR")}</strong></div>
-                    <div style={{ fontSize:12 }}>Cobertura: <strong style={{ color: p.pct>=0.5?"#16A34A":"#DC2626" }}>{(p.pct*100).toFixed(0)}%</strong></div>
-                  </div>
-                </Tooltip>
-              </CircleMarker>
-            ))
+            .map((p, i) => {
+              const key = `${p.uf}|${p.cidade}`;
+              const selecionado = cidadesSelecionadas.has(key);
+              return (
+                <CircleMarker
+                  key={i}
+                  center={[p.lat, p.lon]}
+                  radius={p.raio}
+                  pathOptions={{
+                    fillColor: corPonto(p.pct),
+                    fillOpacity: selecionado ? 1 : 0.82,
+                    color: selecionado ? "#1C1917" : "#fff",
+                    weight: selecionado ? 2.5 : 0.8,
+                  }}
+                  eventHandlers={{ click: () => toggleCidade(p) }}
+                >
+                  <Tooltip direction="top" offset={[0,-4]} opacity={0.97}>
+                    <div style={{ fontFamily:"Arial,sans-serif", minWidth:200 }}>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:4 }}>{p.cidade} — {p.uf}</div>
+                      <div style={{ fontSize:12 }}>Coletas totais: <strong>{p.coletasTotal.toLocaleString("pt-BR")}</strong></div>
+                      <div style={{ fontSize:12 }}>Coletas Parça: <strong>{p.coletasParca.toLocaleString("pt-BR")}</strong></div>
+                      <div style={{ fontSize:12 }}>Cobertura: <strong style={{ color: p.pct>=0.5?"#16A34A":"#DC2626" }}>{(p.pct*100).toFixed(0)}%</strong></div>
+                      {p.transpParca && <div style={{ fontSize:11, marginTop:4, color:"#16A34A" }}>Parça: {p.transpParca}</div>}
+                      {p.transpNaoParca && <div style={{ fontSize:11, color:"#DC2626" }}>Não Parça: {p.transpNaoParca}</div>}
+                      <div style={{ fontSize:10, color:"#6B7280", marginTop:4, fontStyle:"italic" }}>
+                        {selecionado ? "✓ Clique para remover da lista" : "Clique para adicionar à lista de exportação"}
+                      </div>
+                    </div>
+                  </Tooltip>
+                </CircleMarker>
+              );
+            })
           }
         </MapContainer>
       </div>
@@ -219,9 +264,63 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           <span style={{ color:C.cinzaTexto }}>● Tamanho = volume de coletas</span>
         </div>
         <div style={{ fontSize:11, color:C.cinzaTexto, marginLeft:"auto" }}>
-          Use scroll/pinch para zoom · clique num ponto para filtrar o estado na tabela abaixo
+          Hover = detalhes · Clique = adicionar à lista de exportação
         </div>
       </div>
+
+      {/* ── Painel de cidades selecionadas para exportação ── */}
+      {cidadesSelecionadas.size > 0 && (
+        <div style={{ marginTop:16, background:C.cinzaCard, border:`2px solid ${C.laranja}`, borderRadius:12, padding:20 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <div>
+              <div style={{ fontWeight:700, fontSize:14 }}>📋 Cidades selecionadas ({cidadesSelecionadas.size})</div>
+              <div style={{ fontSize:11, color:C.cinzaTexto }}>Clique em "Exportar" para baixar como CSV, ou clique numa cidade do mapa para remover</div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={()=>setCidadesSelecionadas(new Map())}
+                style={{ padding:"7px 14px", borderRadius:8, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:13, cursor:"pointer", color:C.cinzaTexto }}>
+                Limpar lista
+              </button>
+              <button onClick={exportarSelecionadas}
+                style={{ padding:"7px 14px", borderRadius:8, background:C.laranja, color:"#fff", border:"none", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                ⬇ Exportar CSV
+              </button>
+            </div>
+          </div>
+          <div style={{ maxHeight:260, overflowY:"auto" }}>
+            <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
+              <thead style={{ position:"sticky", top:0, background:C.cinzaFundo }}>
+                <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                  <th style={{ padding:"5px 8px" }}>Estado</th>
+                  <th style={{ padding:"5px 8px" }}>Cidade</th>
+                  <th style={{ padding:"5px 8px", textAlign:"right" }}>Coletas totais</th>
+                  <th style={{ padding:"5px 8px", textAlign:"right" }}>Coletas Parça</th>
+                  <th style={{ padding:"5px 8px", textAlign:"right" }}>% Cobertura</th>
+                  <th style={{ padding:"5px 8px" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...cidadesSelecionadas.values()]
+                  .sort((a,b) => b.coletasTotal - a.coletasTotal)
+                  .map((c, i) => (
+                    <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                      <td style={{ padding:"5px 8px" }}>{c.uf}</td>
+                      <td style={{ padding:"5px 8px", fontWeight:600 }}>{c.cidade}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right" }}>{c.coletasTotal.toLocaleString("pt-BR")}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right" }}>{c.coletasParca.toLocaleString("pt-BR")}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right", fontWeight:700, color:c.pct>=0.5?C.verde:C.vermelho }}>{(c.pct*100).toFixed(1)}%</td>
+                      <td style={{ padding:"5px 8px" }}>
+                        <button onClick={()=>setCidadesSelecionadas(prev=>{ const n=new Map(prev); n.delete(`${c.uf}|${c.cidade}`); return n; })}
+                          style={{ background:"none", border:"none", cursor:"pointer", color:C.cinzaTexto, fontSize:14 }}>✕</button>
+                      </td>
+                    </tr>
+                  ))
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── Painel de detalhe do estado (abaixo do mapa) ── */}
       {ufFoco && (
