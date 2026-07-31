@@ -1405,8 +1405,19 @@ export default function SlaApp() {
       obj.prob=results.reduce((a,r)=>a+(r.prob||0),0);
       return obj;
     }
+    if(granular==="ano"){
+      // Para "Ano", o periodo é o próprio ano (número) — agrega todos os meses daquele ano
+      // Como todos os dados são do mesmo ano na prática, usa todos os meses disponíveis
+      const results=ALL_MESES.map(m=>getRawMes(p,m)).filter(Boolean);
+      if(!results.length) return null;
+      const total=results.reduce((a,r)=>a+r.total,0);
+      const getW=key=>{let s=0,t=0;results.forEach(r=>{if(r[key]!=null){s+=r[key]*r.total;t+=r.total;}});return t?Math.round(s/t*100)/100:null;};
+      const obj={total};INDICADORES.forEach(i=>{obj[i.key]=getW(i.key);obj[i.spKey]=getW(i.spKey);});
+      obj.prob=results.reduce((a,r)=>a+(r.prob||0),0);
+      return obj;
+    }
     return null;
-  },[granular,PD_MERGED,getRawMes]);
+  },[granular,PD_MERGED,getRawMes,ALL_MESES]);
 
 
   // ── snapGeral ──────────────────────────────────────────────────────────────
@@ -1768,15 +1779,21 @@ export default function SlaApp() {
             Excluir problemas de coleta {semFiltro&&<span style={{color:C.laranja,fontWeight:700}}>⚡</span>}
           </label>
           {modo==="comparar"&&<div style={{marginTop:8,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <select value={compA??""} onChange={e=>setCompA(e.target.value?Number(e.target.value)||e.target.value:null)} style={{border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 8px",fontSize:12}}>
-              <option value="">Período A</option>
-              {(granular==="semana"?ALL_SEMANAS:granular==="mes"?ALL_MESES:[1,2,3,4]).map(p=><option key={p} value={p}>{lbl(p)}</option>)}
-            </select>
-            <span style={{color:C.cinzaTexto}}>vs</span>
-            <select value={compB??""} onChange={e=>setCompB(e.target.value?Number(e.target.value)||e.target.value:null)} style={{border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 8px",fontSize:12}}>
-              <option value="">Período B</option>
-              {(granular==="semana"?ALL_SEMANAS:granular==="mes"?ALL_MESES:[1,2,3,4]).map(p=><option key={p} value={p}>{lbl(p)}</option>)}
-            </select>
+            {granular==="ano"
+              ? <span style={{fontSize:12,color:C.cinzaTexto}}>Em granularidade Anual há apenas um único período disponível — use Semana, Mês ou Trimestre para comparar.</span>
+              : <>
+                <select value={compA??""} onChange={e=>setCompA(e.target.value?Number(e.target.value)||e.target.value:null)} style={{border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 8px",fontSize:12}}>
+                  <option value="">Período A</option>
+                  {(granular==="semana"?ALL_SEMANAS:granular==="mes"?ALL_MESES:[1,2,3,4]).map(p=><option key={p} value={p}>{lbl(p)}</option>)}
+                </select>
+                <span style={{color:C.cinzaTexto}}>vs</span>
+                <select value={compB??""} onChange={e=>setCompB(e.target.value?Number(e.target.value)||e.target.value:null)} style={{border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 8px",fontSize:12}}>
+                  <option value="">Período B</option>
+                  {(granular==="semana"?ALL_SEMANAS:granular==="mes"?ALL_MESES:[1,2,3,4]).map(p=><option key={p} value={p}>{lbl(p)}</option>)}
+                </select>
+                {compA&&compB&&compA===compB&&<span style={{fontSize:12,color:C.amarelo,fontWeight:600}}>⚠️ Selecione períodos diferentes</span>}
+              </>
+            }
           </div>}
         </div>
 
@@ -1939,9 +1956,11 @@ export default function SlaApp() {
               <td style={{padding:"8px 12px",textAlign:"center",fontWeight:700,color:row.prob>0?C.vermelho:C.verde}}>{row.prob}</td>
             </tr>)}</tbody>
           </table></div>}
-          {modo==="comparar"&&compA!=null&&compB!=null&&<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          {modo==="comparar"&&compA!=null&&compB!=null&&compA!==compB&&<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
             <thead><tr style={{background:C.cinzaFundo}}>
               <th style={{padding:"8px 12px",textAlign:"left",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>Parceiro</th>
+              <th style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:C.azul,textTransform:"uppercase",whiteSpace:"nowrap"}}>Coletas {lbl(compA)}</th>
+              <th style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:C.laranja,textTransform:"uppercase",whiteSpace:"nowrap"}}>Coletas {lbl(compB)}</th>
               {INDICADORES.filter(i=>indicSel.includes(i.key)).flatMap(ind=>[
                 <th key={`${ind.key}_a`} style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:C.azul,textTransform:"uppercase",whiteSpace:"nowrap"}}>{ind.label} {lbl(compA)}</th>,
                 <th key={`${ind.key}_b`} style={{padding:"8px 12px",textAlign:"center",fontSize:10,fontWeight:700,color:C.laranja,textTransform:"uppercase",whiteSpace:"nowrap"}}>{ind.label} {lbl(compB)}</th>,
@@ -1950,10 +1969,14 @@ export default function SlaApp() {
             </tr></thead>
             <tbody>{parceiros.map((p,i)=>{
               const dA=getRaw(p,compA),dB=getRaw(p,compB);
+              if(!dA&&!dB) return null;
               return <tr key={p} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2===0?"transparent":C.cinzaFundo}}>
                 <td style={{padding:"8px 12px",fontWeight:600,color:PARC_CORES[i%PARC_CORES.length]}}>{p}</td>
+                <td style={{padding:"8px 12px",textAlign:"center",color:C.azul,fontWeight:600}}>{dA?.total??"—"}</td>
+                <td style={{padding:"8px 12px",textAlign:"center",color:C.laranja,fontWeight:600}}>{dB?.total??"—"}</td>
                 {INDICADORES.filter(ind=>indicSel.includes(ind.key)).flatMap(ind=>{
-                  const vA=dA?.[ind.key],vB=dB?.[ind.key];
+                  const chave = semFiltro ? ind.spKey : ind.key;
+                  const vA=dA?.[chave],vB=dB?.[chave];
                   const d=vA!=null&&vB!=null?Math.round((vB-vA)*100)/100:null;
                   const cor=d!=null?(ind.inv?d<=0:d>=0)?C.verde:C.vermelho:C.cinzaTexto;
                   return [
@@ -1963,7 +1986,7 @@ export default function SlaApp() {
                   ];
                 })}
               </tr>;
-            })}</tbody>
+            }).filter(Boolean)}</tbody>
           </table></div>}
         </div>}
 
