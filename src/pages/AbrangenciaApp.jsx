@@ -1945,27 +1945,42 @@ function parseCSVAbrangencia(texto) {
   return data
     .filter(r => r["Logistica Reversa Estado"] && r["Logistica Reversa Cidade"])
     .map(r => {
-      // Coluna de data: "Logistica Reversa Data Coleta Efetivada" (formato YYYY-MM-DD)
-      const dataColeta = String(r["Logistica Reversa Data Coleta Efetivada"]||"").trim();
-      // Mês e Ano: vêm da planilha OU são extraídos da data
-      const mesRaw  = r["Logistica Reversa Data Coleta Efetivada Month"] || r["Mês"] || r["Mes"];
-      const anoRaw  = r["Logistica Reversa Data Coleta Efetivada Year"]  || r["Ano"];
-      // Semana ISO: sempre calculada a partir da data (não vem da planilha)
-      const semanaCalc = semanaISO(dataColeta);
-      // Fallback: extrai mês/ano da data se as colunas estiverem vazias
-      let mes = parseInt(mesRaw) || null;
+      // Aceita tanto "Date" quanto sem "Date" no nome da coluna
+      const dataColeta = String(
+        r["Logistica Reversa Data Coleta Efetivada Date"] ||
+        r["Logistica Reversa Data Coleta Efetivada"] || ""
+      ).trim();
+
+      // Mês: pode vir como "2026-07" (formato ano-mês) ou como número simples "7"
+      const mesRaw = String(
+        r["Logistica Reversa Data Coleta Efetivada Month"] || ""
+      ).trim();
+      // Se formato "YYYY-MM", extrai só o número do mês
+      const mes = mesRaw.includes("-")
+        ? parseInt(mesRaw.split("-")[1]) || null
+        : parseInt(mesRaw) || null;
+
+      const anoRaw = String(
+        r["Logistica Reversa Data Coleta Efetivada Year"] || ""
+      ).trim();
       let ano = parseInt(anoRaw) || null;
+
+      // Semana ISO sempre calculada da data (mais confiável que campo separado)
+      const semanaCalc = semanaISO(dataColeta);
+
+      // Fallback: extrai mês/ano direto da data se não vieram nas colunas
       if (dataColeta && dataColeta.length >= 7) {
         const [y, m] = dataColeta.split("-");
-        if (!mes) mes = parseInt(m) || null;
+        if (!mes && m) { /* mes já foi extraído acima */ }
         if (!ano) ano = parseInt(y) || null;
       }
+
       return {
         validacao:      String(r["VALIDAÇÃO"] || r["Validação"] || r["Validacao"] || "").trim().toUpperCase(),
-        transportadora: String(r["Logistica Reversa Transportadora"]||"").trim(),
-        estado:         String(r["Logistica Reversa Estado"]||"").trim().toUpperCase(),
-        cidade:         String(r["Logistica Reversa Cidade"]||"").trim(),
-        abrangencia:    parseFloat(String(r["Abrangencia"]||"").replace(",",".")) || 0,
+        transportadora: String(r["Logistica Reversa Transportadora"] || "").trim(),
+        estado:         String(r["Logistica Reversa Estado"] || "").trim().toUpperCase(),
+        cidade:         String(r["Logistica Reversa Cidade"] || "").trim(),
+        abrangencia:    parseFloat(String(r["Abrangencia"] || "").replace(",", ".")) || 0,
         dataColeta,
         semana:         semanaCalc,
         mes,
@@ -2054,36 +2069,45 @@ function resumoPorUF(linhas) {
 }
 
 function calcularOportunidades(linhas) {
-  // 1. Encontra a data da coleta mais recente de cada cidade
+  // 1. Encontra a data mais recente de cada cidade (entre TODAS as transportadoras)
   const ultimaDataPorCidade = new Map();
   linhas.forEach(r => {
+    if (!r.dataColeta) return;
     const k = `${r.estado}|${normalizarCidade(r.cidade)}`;
-    const dataKey = r.dataColeta || `${r.ano||0}-${String(r.mes||0).padStart(2,"0")}-${String(r.semana||0).padStart(2,"0")}`;
-    if (!ultimaDataPorCidade.has(k) || dataKey > ultimaDataPorCidade.get(k)) {
-      ultimaDataPorCidade.set(k, dataKey);
+    if (!ultimaDataPorCidade.has(k) || r.dataColeta > ultimaDataPorCidade.get(k)) {
+      ultimaDataPorCidade.set(k, r.dataColeta);
     }
   });
 
-  // 2. Pra cada cidade, só olha as linhas da data mais recente pra definir se tem Parça
+  // 2. Para cada cidade, verifica se há alguma transportadora PARÇA
+  //    na data mais recente. Se não houver → oportunidade.
+  //    Ex: Brusque tem CONECTA (NÃO PARÇA) em 16/07 → última data é 16/07
+  //    Verifica se LOGME (PARÇA) também fez coleta em 16/07 → não → oportunidade.
   const pc = new Map();
   linhas.forEach(r => {
     const k = `${r.estado}|${normalizarCidade(r.cidade)}`;
-    const dataKey = r.dataColeta || `${r.ano||0}-${String(r.mes||0).padStart(2,"0")}-${String(r.semana||0).padStart(2,"0")}`;
-    const ultimaData = ultimaDataPorCidade.get(k);
-
-    if (!pc.has(k)) pc.set(k, { estado: r.estado, cidade: r.cidade, temParca: false, abrangencia: 0, transportadoras: new Set() });
+    if (!pc.has(k)) {
+      pc.set(k, {
+        estado: r.estado, cidade: r.cidade,
+        temParcaNaUltimaData: false,
+        abrangencia: 0,
+        transportadorasNaUltimaData: new Set(),
+      });
+    }
     const c = pc.get(k);
     c.abrangencia += r.abrangencia;
-    // Só a última coleta define se a cidade tem Parça ou não
-    if (dataKey === ultimaData) {
-      if (r.validacao === "PARÇA") c.temParca = true;
-      else c.transportadoras.add(r.transportadora);
+
+    const ultimaData = ultimaDataPorCidade.get(k);
+    if (r.dataColeta === ultimaData) {
+      if (r.validacao === "PARÇA") c.temParcaNaUltimaData = true;
+      else c.transportadorasNaUltimaData.add(r.transportadora);
     }
   });
 
-  return [...pc.values()].filter(c => !c.temParca)
+  return [...pc.values()]
+    .filter(c => !c.temParcaNaUltimaData)
     .sort((a, b) => b.abrangencia - a.abrangencia)
-    .map(c => ({ ...c, transportadoras: [...c.transportadoras].join(", ") }));
+    .map(c => ({ ...c, transportadoras: [...c.transportadorasNaUltimaData].join(", ") }));
 }
 
 function corDoBloco(d) {
