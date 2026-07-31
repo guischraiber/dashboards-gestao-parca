@@ -4,6 +4,7 @@ import AbrangenciaApp from "./pages/AbrangenciaApp.jsx";
 import SlaApp from "./pages/SlaApp.jsx";
 import CsatApp from "./pages/CsatApp.jsx";
 import ScoreApp from "./pages/score/ScoreApp.jsx";
+import WeeklyApp from "./pages/WeeklyApp.jsx";
 import "./pages/score/style.css";
 
 const C = {
@@ -82,6 +83,9 @@ function NavBar() {
       <span style={{ fontWeight: 700, fontSize: 15, color: C.texto, marginRight: 16 }}>
         Gestão Parça
       </span>
+      <NavLink to="/weekly" style={linkStyle}>
+        📋 Weekly
+      </NavLink>
       <NavLink to="/abrangencia" style={linkStyle}>
         Abrangência Parça
       </NavLink>
@@ -111,7 +115,7 @@ function AppShell() {
   // Redireciona a raiz (ou rota desconhecida) para /sla, sem desmontar nada.
   useEffect(() => {
     if (isPartnerLink) return;
-    if (!["/abrangencia", "/sla", "/csat", "/score"].includes(location.pathname)) {
+    if (!["/weekly", "/abrangencia", "/sla", "/csat", "/score"].includes(location.pathname)) {
       navigate("/sla", { replace: true });
     }
   }, [location.pathname, isPartnerLink, navigate]);
@@ -124,6 +128,7 @@ function AppShell() {
     );
   }
 
+  const showWeekly = location.pathname === "/weekly";
   const showAbrangencia = location.pathname === "/abrangencia";
   const showSla = location.pathname === "/sla" || location.pathname === "/";
   const showCsat = location.pathname === "/csat";
@@ -132,6 +137,11 @@ function AppShell() {
   return (
     <div style={{ minHeight: "100vh", background: C.cinzaFundo }}>
       <NavBar />
+      <div style={{ display: showWeekly ? "block" : "none" }}>
+        <ErrorBoundary label="Weekly">
+          <WeeklyApp />
+        </ErrorBoundary>
+      </div>
       {/* Os dashboards ficam sempre montados assim que visitados uma vez.
           Trocar de aba só esconde visualmente os outros, então o estado de
           importação de arquivos não se perde ao navegar entre eles. */}
