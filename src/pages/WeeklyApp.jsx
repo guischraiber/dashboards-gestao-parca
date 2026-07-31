@@ -199,39 +199,81 @@ export default function WeeklyApp() {
     }).filter(Boolean)
   ),[parcsA,parcsAnt,threshold]);
 
-  // ── CSAT — semana mais recente disponível ─────────────────────────────────
-  const csatAtual = useMemo(()=>{
+  // ── CSAT — por período selecionado + anterior ─────────────────────────────
+  const csatDoPeríodo = useCallback((sel)=>{
+    if(sel==null) return null;
     const vals = Object.values(csatSlots).filter(v=>v&&v.semana);
     if(!vals.length) return null;
+    if(granular==="semana"){
+      return vals.find(v=>v.semana===sel)||null;
+    }
+    if(granular==="mes"){
+      const vs=vals.filter(v=>v.mes===sel);
+      if(!vs.length) return null;
+      const tot=vs.reduce((s,v)=>s+(v.respostas||0),0);
+      const n45=vs.reduce((s,v)=>s+(v.notas45!=null?v.notas45:Math.round((v.share||0)*(v.respostas||0))),0);
+      return {share:tot?n45/tot:null,respostas:tot,label:MESES_NOME[sel]};
+    }
+    if(granular==="trim"){
+      const ms=TRIM_MESES[sel]||[];
+      const vs=vals.filter(v=>ms.includes(v.mes));
+      if(!vs.length) return null;
+      const tot=vs.reduce((s,v)=>s+(v.respostas||0),0);
+      const n45=vs.reduce((s,v)=>s+(v.notas45!=null?v.notas45:Math.round((v.share||0)*(v.respostas||0))),0);
+      return {share:tot?n45/tot:null,respostas:tot,label:`T${sel}`};
+    }
     return vals.sort((a,b)=>(b.semana||0)-(a.semana||0))[0];
-  },[csatSlots]);
+  },[csatSlots,granular]);
 
-  // ── Abrangência ───────────────────────────────────────────────────────────
-  const cobParca = useMemo(()=>{
+  const csatA   = useMemo(()=>csatDoPeríodo(selA),   [selA,   csatDoPeríodo]);
+  const csatAnt = useMemo(()=>csatDoPeríodo(selAnt), [selAnt, csatDoPeríodo]);
+
+  // ── Abrangência filtrada por período ─────────────────────────────────────
+  // A base de abrangência tem dataColeta e semana — filtramos pelas semanas do período
+  const semanasDoA   = useMemo(()=>semsDoPeríodo(selA).map(w=>w.s),   [selA,   semsDoPeríodo]);
+  const semanasDoAnt = useMemo(()=>semsDoPeríodo(selAnt).map(w=>w.s), [selAnt, semsDoPeríodo]);
+
+  const calcCobParca = useCallback((semanas)=>{
     if(!abrangAtual?.rows) return null;
-    const total = abrangAtual.rows.reduce((s,r)=>s+r.abrangencia,0);
-    const parca = abrangAtual.rows.filter(r=>r.validacao==="PARÇA").reduce((s,r)=>s+r.abrangencia,0);
-    return {pct:total?parca/total*100:0, total, parca};
+    const rows = semanas.length
+      ? abrangAtual.rows.filter(r=>semanas.includes(r.semana))
+      : abrangAtual.rows; // sem filtro de período → usa tudo
+    if(!rows.length) return null;
+    const total = rows.reduce((s,r)=>s+r.abrangencia,0);
+    const parca = rows.filter(r=>r.validacao==="PARÇA").reduce((s,r)=>s+r.abrangencia,0);
+    // Top estados por volume sem Parça (oportunidades)
+    const porUF={};
+    rows.forEach(r=>{ if(!porUF[r.estado]) porUF[r.estado]={total:0,parca:0}; porUF[r.estado].total+=r.abrangencia; if(r.validacao==="PARÇA") porUF[r.estado].parca+=r.abrangencia; });
+    const ufList = Object.entries(porUF).map(([uf,d])=>({uf,total:d.total,parca:d.parca,pct:d.total?d.parca/d.total*100:0})).sort((a,b)=>b.total-a.total);
+    return {pct:total?parca/total*100:0,total,parca,ufList};
   },[abrangAtual]);
 
-  // ── Coletas em aberto +25 dias ────────────────────────────────────────────
+  const cobParca    = useMemo(()=>calcCobParca(semanasDoA),   [semanasDoA,   calcCobParca]);
+  const cobParcaAnt = useMemo(()=>calcCobParca(semanasDoAnt), [semanasDoAnt, calcCobParca]);
+
+  // ── Coletas em aberto +25 dias — filtradas pelo período ──────────────────
   const emAberto25 = useMemo(()=>{
     if(!rawRows.length) return {total:0,parceiros:[]};
+    const semanasAtivas = semanasDoA.length ? new Set(semanasDoA) : null;
     const abertas = rawRows.filter(r=>{
       const situacao = r["Flag Situacao Coleta"]||r["Situacao"]||"";
       if(situacao==="Coletado") return false;
       const aging = parseFloat(r["Aging coleta efetivada"]||r["aging_days"]||r["Aging"]||0);
-      return aging>=25;
+      if(aging<25) return false;
+      if(semanasAtivas){
+        const s = parseInt(r["semana_Efetivada"]||r["Semana_Efetivada"]||0);
+        if(s && !semanasAtivas.has(s)) return false;
+      }
+      return true;
     });
     const pp={};
     abertas.forEach(r=>{ const p=r["Transportadora"]||r["Parceiro"]||"—"; pp[p]=(pp[p]||0)+1; });
-    return {total:abertas.length, parceiros:Object.entries(pp).sort((a,b)=>b[1]-a[1]).map(([n,c])=>({nome:n,count:c}))};
-  },[rawRows]);
+    return {total:abertas.length,parceiros:Object.entries(pp).sort((a,b)=>b[1]-a[1]).map(([n,c])=>({nome:n,count:c}))};
+  },[rawRows,semanasDoA]);
 
   // ── Geração do HTML para exportação ──────────────────────────────────────
   const gerarHTML = useCallback(()=>{
-    const nomeRel = granular==="semana"?"Weekly":granular==="mes"?"MBR":"QBR";
-    const titulo = `${nomeRel} Gestão Parça — ${selA!=null?lbl(selA):"Período não selecionado"}`;
+    const titulo = `Weekly Gestão Parça — ${selA!=null?lbl(selA):"Período não selecionado"}`;
     const dataHoje = new Date().toLocaleDateString("pt-BR");
     const fmtV = (v,ind) => v==null?"—":`${ind.inv?Math.round(v):v.toFixed(1)}${ind.unit}`;
     const fmtD = (d,inv) => {
@@ -242,9 +284,7 @@ export default function WeeklyApp() {
     };
     const box=(cor,label,val,sub="")=>`<div style="background:#F8F7F4;border-radius:8px;padding:16px;display:inline-block;min-width:160px;margin-right:12px;margin-bottom:8px"><div style="font-size:12px;color:#6B7280">${label}</div><div style="font-size:26px;font-weight:700;color:${cor}">${val}</div>${sub?`<div style="font-size:11px;color:#6B7280;margin-top:2px">${sub}</div>`:""}</div>`;
     const rBlock=(txt,cor)=>txt?`<div style="background:${cor}18;border-left:4px solid ${cor};padding:12px 16px;border-radius:0 8px 8px 0;white-space:pre-wrap;margin-top:12px;font-size:13px">${txt}</div>`:"";
-    const sec=(titulo,cor,corpo,racional)=>`
-      <h2 style="border-left:4px solid ${cor};padding-left:12px;margin-top:32px;margin-bottom:12px;font-size:18px">${titulo}</h2>
-      ${corpo}${rBlock(racional,cor)}`;
+    const sec=(t,cor,corpo,rac)=>`<h2 style="border-left:4px solid ${cor};padding-left:12px;margin-top:32px;margin-bottom:12px;font-size:18px">${t}</h2>${corpo}${rBlock(rac,cor)}`;
 
     const tblInd=()=>{
       if(!indA) return `<p style="color:#6B7280">Sem dados de SLA para o período selecionado.</p>`;
@@ -258,60 +298,64 @@ export default function WeeklyApp() {
         const vA=indA[ind.key],vAnt=indAnt?.[ind.key];
         const d=vA!=null&&vAnt!=null?Math.round((vA-vAnt)*100)/100:null;
         const cor=corInd(vA,ind);
-        html+=`<tr style="border-top:1px solid #E5E3DF;background:${i%2?"#F8F7F4":"white"}">
-          <td style="padding:8px 10px;font-weight:600">${ind.label}</td>
-          <td style="padding:8px 10px;text-align:center;font-weight:700;color:${cor}">${fmtV(vA,ind)}</td>
-          ${indAnt?`<td style="padding:8px 10px;text-align:center;color:#6B7280">${fmtV(vAnt,ind)}</td><td style="padding:8px 10px;text-align:center">${fmtD(d,ind.inv)}</td>`:""}
-          <td style="padding:8px 10px;text-align:center;color:#6B7280">${ind.inv?`≤${ind.meta}${ind.unit}`:`${ind.meta}${ind.unit}`}</td>
-        </tr>`;
+        html+=`<tr style="border-top:1px solid #E5E3DF;background:${i%2?"#F8F7F4":"white"}"><td style="padding:8px 10px;font-weight:600">${ind.label}</td><td style="padding:8px 10px;text-align:center;font-weight:700;color:${cor}">${fmtV(vA,ind)}</td>${indAnt?`<td style="padding:8px 10px;text-align:center;color:#6B7280">${fmtV(vAnt,ind)}</td><td style="padding:8px 10px;text-align:center">${fmtD(d,ind.inv)}</td>`:""}<td style="padding:8px 10px;text-align:center;color:#6B7280">${ind.inv?`≤${ind.meta}${ind.unit}`:`${ind.meta}${ind.unit}`}</td></tr>`;
       });
       html+="</tbody></table>";
       if(movimentos.length){
-        html+=`<p style="font-weight:700;font-size:13px;margin-bottom:6px">⚡ Movimentos ≥ ${threshold} p.p./dias</p>
-        <table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#F8F7F4">
-          ${["Parceiro","Indicador","Antes","Depois","Δ"].map(h=>`<th style="padding:6px 8px;text-align:${h==="Antes"||h==="Depois"||h==="Δ"?"center":"left"};font-size:11px;color:#6B7280;text-transform:uppercase">${h}</th>`).join("")}
-        </tr></thead><tbody>`;
-        movimentos.forEach((m,i)=>{
-          html+=`<tr style="border-top:1px solid #E5E3DF;background:${i%2?"#F8F7F4":"white"}">
-            <td style="padding:6px 8px;font-weight:600">${m.parceiro}</td>
-            <td style="padding:6px 8px">${m.ind}</td>
-            <td style="padding:6px 8px;text-align:center;color:#6B7280">${fmtV(m.ant,{inv:m.inv,unit:m.unit})}</td>
-            <td style="padding:6px 8px;text-align:center;font-weight:700">${fmtV(m.atual,{inv:m.inv,unit:m.unit})}</td>
-            <td style="padding:6px 8px;text-align:center">${fmtD(m.d,m.inv)}</td>
-          </tr>`;
-        });
+        html+=`<p style="font-weight:700;font-size:13px;margin-bottom:6px">⚡ Movimentos ≥ ${threshold} p.p./dias</p><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:#F8F7F4">${["Parceiro","Indicador","Antes","Depois","Δ"].map(h=>`<th style="padding:6px 8px;text-align:${h==="Antes"||h==="Depois"||h==="Δ"?"center":"left"};font-size:11px;color:#6B7280;text-transform:uppercase">${h}</th>`).join("")}</tr></thead><tbody>`;
+        movimentos.forEach((m,i)=>{ html+=`<tr style="border-top:1px solid #E5E3DF;background:${i%2?"#F8F7F4":"white"}"><td style="padding:6px 8px;font-weight:600">${m.parceiro}</td><td style="padding:6px 8px">${m.ind}</td><td style="padding:6px 8px;text-align:center;color:#6B7280">${fmtV(m.ant,{inv:m.inv,unit:m.unit})}</td><td style="padding:6px 8px;text-align:center;font-weight:700">${fmtV(m.atual,{inv:m.inv,unit:m.unit})}</td><td style="padding:6px 8px;text-align:center">${fmtD(m.d,m.inv)}</td></tr>`; });
         html+="</tbody></table>";
       }
       return html;
     };
 
-    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
-<title>${titulo}</title>
-<style>@media print{body{margin:0;padding:20px}button{display:none!important}}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#1C1917;padding:40px;max-width:960px;margin:0 auto}
-h1{font-size:22px;margin:0 0 4px}.sub{color:#6B7280;font-size:13px;margin-bottom:32px}
-</style></head><body>
+    const abrangHtml=()=>{
+      if(!cobParca) return `<p style="color:#6B7280">Sem dados de abrangência.</p>`;
+      const dPct=cobParcaAnt?Math.round((cobParca.pct-cobParcaAnt.pct)*100)/100:null;
+      let h=box(cobParca.pct>=50?"#16A34A":"#DC2626",`Cobertura Parça${selA!=null?` (${lbl(selA)})`:""}}`,`${cobParca.pct.toFixed(1)}%`,`${cobParca.parca.toLocaleString("pt-BR")} de ${cobParca.total.toLocaleString("pt-BR")} coletas`);
+      if(cobParcaAnt) h+=box("#6B7280",`Anterior${selAnt!=null?` (${lbl(selAnt)})`:""}}`,`${cobParcaAnt.pct.toFixed(1)}%`,`${cobParcaAnt.parca.toLocaleString("pt-BR")} de ${cobParcaAnt.total.toLocaleString("pt-BR")} coletas`);
+      if(dPct!=null) h+=box(dPct>=0?"#16A34A":"#DC2626","Variação",`${dPct>=0?"+":""}${dPct.toFixed(2)} p.p.`,"vs período anterior");
+      if(cobParca.ufList?.length){
+        h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:16px"><thead><tr style="background:#F8F7F4"><th style="padding:6px 10px;text-align:left;font-size:11px;color:#6B7280;text-transform:uppercase">Estado</th><th style="padding:6px 10px;text-align:right;font-size:11px;color:#6B7280;text-transform:uppercase">Coletas</th><th style="padding:6px 10px;text-align:right;font-size:11px;color:#16A34A;text-transform:uppercase">Parça</th><th style="padding:6px 10px;text-align:right;font-size:11px;color:#6B7280;text-transform:uppercase">% Cobertura</th></tr></thead><tbody>`;
+        cobParca.ufList.slice(0,15).forEach((u,i)=>{ const c=u.pct>=75?"#16A34A":u.pct>=40?"#CA8A04":"#DC2626"; h+=`<tr style="border-top:1px solid #E5E3DF;background:${i%2?"#F8F7F4":"white"}"><td style="padding:6px 10px;font-weight:600">${u.uf}</td><td style="padding:6px 10px;text-align:right">${u.total.toLocaleString("pt-BR")}</td><td style="padding:6px 10px;text-align:right">${u.parca.toLocaleString("pt-BR")}</td><td style="padding:6px 10px;text-align:right;font-weight:700;color:${c}">${u.pct.toFixed(1)}%</td></tr>`; });
+        h+="</tbody></table>";
+      }
+      return h;
+    };
+
+    const csatHtml=()=>{
+      if(!csatA) return `<p style="color:#6B7280">Sem dados de CSAT.</p>`;
+      const dCsat=csatAnt&&csatA?.share!=null&&csatAnt?.share!=null?Math.round((csatA.share-csatAnt.share)*1000)/10:null;
+      let h=box("#7C3AED",`Share notas 4-5${selA!=null?` (${lbl(selA)})`:""}}`,csatA.share!=null?`${(csatA.share*100).toFixed(1)}%`:"—",`${csatA.respostas||0} respostas${csatA.label?` · ${csatA.label}`:""}`);
+      if(csatAnt) h+=box("#6B7280",`Anterior${selAnt!=null?` (${lbl(selAnt)})`:""}}`,csatAnt.share!=null?`${(csatAnt.share*100).toFixed(1)}%`:"—",`${csatAnt.respostas||0} respostas${csatAnt.label?` · ${csatAnt.label}`:""}`);
+      if(dCsat!=null) h+=box(dCsat>=0?"#16A34A":"#DC2626","Variação",`${dCsat>=0?"+":""}${dCsat.toFixed(1)} p.p.`,"vs período anterior");
+      return h;
+    };
+
+    const abertoHtml=()=>{
+      let h=box(emAberto25.total>0?"#DC2626":"#16A34A",`Total ≥ 25 dias em aberto${selA!=null?` (${lbl(selA)})`:""}}`,emAberto25.total);
+      if(emAberto25.parceiros.length){
+        h+=`<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:12px"><thead><tr style="background:#F8F7F4"><th style="padding:6px 10px;text-align:left;font-size:11px;color:#6B7280">Parceiro</th><th style="padding:6px 10px;text-align:right;font-size:11px;color:#6B7280">Coletas</th></tr></thead><tbody>`;
+        emAberto25.parceiros.forEach((p,i)=>{ h+=`<tr style="border-top:1px solid #E5E3DF;background:${i%2?"#F8F7F4":"white"}"><td style="padding:6px 10px">${p.nome}</td><td style="padding:6px 10px;text-align:right;font-weight:700;color:#DC2626">${p.count}</td></tr>`; });
+        h+="</tbody></table>";
+      }
+      return h;
+    };
+
+    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>${titulo}</title>
+<style>@media print{body{margin:0;padding:20px}button{display:none!important}}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#1C1917;padding:40px;max-width:960px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}.sub{color:#6B7280;font-size:13px;margin-bottom:32px}</style>
+</head><body>
 <h1>📋 ${titulo}</h1>
 <div class="sub">Gerado em ${dataHoje} · Período: ${selA!=null?lbl(selA):"—"}${selAnt!=null?" vs "+lbl(selAnt):""}</div>
-${sec("🗺️ Abrangência Parça","#F97316",
-  cobParca?box(cobParca.pct>=50?"#16A34A":"#DC2626","Cobertura Parça",`${cobParca.pct.toFixed(1)}%`,`${cobParca.parca.toLocaleString("pt-BR")} de ${cobParca.total.toLocaleString("pt-BR")} coletas`):"<p style='color:#6B7280'>Sem dados de abrangência.</p>",
-  racionais.abrangencia)}
+${sec("🗺️ Abrangência Parça","#F97316",abrangHtml(),racionais.abrangencia)}
 ${sec("📊 Indicadores SLA / Agendamento / Aderência","#2563EB",tblInd(),racionais.indicadores)}
-${sec("📦 Coleta x Recebimento","#16A34A",
-  crData?.rows?`<p style="color:#6B7280;font-size:13px">Base: <strong>${crData.nome||"—"}</strong> · ${crData.rows.length.toLocaleString("pt-BR")} linhas</p>`:"<p style='color:#6B7280'>Sem dados importados.</p>",
-  racionais.coletaReceb)}
-${sec("⭐ CSAT","#7C3AED",
-  csatAtual?box("#7C3AED","Share notas 4-5",`${csatAtual.share!=null?(csatAtual.share*100).toFixed(1)+"%":"—"}`,`${csatAtual.respostas||0} respostas · ${csatAtual.label||""}`):"<p style='color:#6B7280'>Sem dados de CSAT.</p>",
-  racionais.csat)}
-${sec("⏰ Coletas em Aberto (+25 dias)","#DC2626",
-  `${box(emAberto25.total>0?"#DC2626":"#16A34A","Total ≥ 25 dias em aberto",emAberto25.total)}
-  ${emAberto25.parceiros.slice(0,8).map(p=>box("#DC2626",p.nome,p.count)).join("")}`,
-  racionais.emAberto)}
+${sec("📦 Coleta x Recebimento","#16A34A",crData?.rows?`<p style="color:#6B7280;font-size:13px">Base: <strong>${crData.nome||"—"}</strong> · ${crData.rows.length.toLocaleString("pt-BR")} linhas</p>`:"<p style='color:#6B7280'>Sem dados.</p>",racionais.coletaReceb)}
+${sec("⭐ CSAT","#7C3AED",csatHtml(),racionais.csat)}
+${sec("⏰ Coletas em Aberto (+25 dias)","#DC2626",abertoHtml(),racionais.emAberto)}
 <p style="margin-top:48px;font-size:11px;color:#9CA3AF;border-top:1px solid #E5E3DF;padding-top:12px">Gerado pelo Dashboard Gestão Parça</p>
 </body></html>`;
-  },[selA,selAnt,lbl,granular,indA,indAnt,movimentos,threshold,racionais,cobParca,csatAtual,emAberto25,crData]);
-
-  const exportarHTML = ()=>{ const html=gerarHTML(); const b=new Blob([html],{type:"text/html"}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u;a.download=`${granular==="semana"?"weekly":granular==="mes"?"mbr":"qbr"}-${selA!=null?lbl(selA):"periodo"}.html`;a.click();URL.revokeObjectURL(u); };
+  },[selA,selAnt,lbl,indA,indAnt,movimentos,threshold,racionais,cobParca,cobParcaAnt,csatA,csatAnt,emAberto25,crData]);
+  const exportarHTML = ()=>{ const html=gerarHTML(); const b=new Blob([html],{type:"text/html"}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u;a.download=`weekly-${selA!=null?lbl(selA):"periodo"}.html`;a.click();URL.revokeObjectURL(u); };
   const exportarPDF  = ()=>{ const w=window.open("","_blank"); w.document.write(gerarHTML()); w.document.close(); setTimeout(()=>w.print(),600); };
 
   const pill = on=>({padding:"5px 14px",borderRadius:999,fontSize:13,fontWeight:600,cursor:"pointer",border:`1.5px solid ${on?C.laranja:C.cinzaBorda}`,background:on?`${C.laranja}18`:"transparent",color:on?C.laranja:C.cinzaTexto});
@@ -319,13 +363,46 @@ ${sec("⏰ Coletas em Aberto (+25 dias)","#DC2626",
 
   if(loading) return <div style={{padding:40,color:C.cinzaTexto,fontSize:13}}>⏳ Carregando dados...</div>;
 
-  const nomeRel = granular==="semana"?"Weekly":granular==="mes"?"MBR":"QBR";
+  const nomeRel = "Weekly";
 
   const secoes = [
     {key:"abrangencia", titulo:"🗺️ Abrangência Parça", cor:C.laranja,
-     conteudo: cobParca
-       ? <div style={{display:"flex",gap:12,flexWrap:"wrap"}}><Kpi label="Cobertura Parça" valor={`${cobParca.pct.toFixed(1)}%`} cor={cobParca.pct>=50?C.verde:C.vermelho} sub={`${cobParca.parca.toLocaleString("pt-BR")} de ${cobParca.total.toLocaleString("pt-BR")} coletas`}/></div>
-       : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados. Importe a base na aba <strong>Abrangência Parça</strong>.</p>},
+     conteudo: cobParca ? <>
+       {/* KPIs: atual + anterior + delta */}
+       <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:16}}>
+         <Kpi label={`Cobertura Parça${selA!=null?` (${lbl(selA)})`:""}`} valor={`${cobParca.pct.toFixed(1)}%`} cor={cobParca.pct>=50?C.verde:C.vermelho} sub={`${cobParca.parca.toLocaleString("pt-BR")} de ${cobParca.total.toLocaleString("pt-BR")} coletas`}/>
+         {cobParcaAnt&&<Kpi label={`Anterior${selAnt!=null?` (${lbl(selAnt)})`:""}`} valor={`${cobParcaAnt.pct.toFixed(1)}%`} cor={C.cinzaTexto} sub={`${cobParcaAnt.parca.toLocaleString("pt-BR")} de ${cobParcaAnt.total.toLocaleString("pt-BR")} coletas`}/>}
+         {cobParcaAnt&&(()=>{const d=Math.round((cobParca.pct-cobParcaAnt.pct)*100)/100;return <Kpi label="Variação" valor={`${d>=0?"+":""}${d.toFixed(2)} p.p.`} cor={d>=0?C.verde:C.vermelho} sub="vs período anterior"/>;})()} 
+       </div>
+       {/* Tabela por estado */}
+       {cobParca.ufList?.length>0&&<>
+         <div style={{fontSize:12,fontWeight:700,color:C.cinzaTexto,marginBottom:6,textTransform:"uppercase"}}>Cobertura por estado</div>
+         <div style={{overflowX:"auto"}}>
+           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+             <thead><tr style={{background:C.cinzaFundo}}>
+               {["Estado","Coletas","Parça","% Cobertura"].map((h,i)=><th key={h} style={{padding:"5px 8px",textAlign:i===0?"left":"right",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}
+             </tr></thead>
+             <tbody>{cobParca.ufList.slice(0,15).map((u,i)=>{
+               const cor=u.pct>=75?C.verde:u.pct>=40?C.amarelo:C.vermelho;
+               const barW=Math.round(u.pct);
+               return <tr key={u.uf} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2===0?"transparent":C.cinzaFundo}}>
+                 <td style={{padding:"5px 8px",fontWeight:600}}>{u.uf}</td>
+                 <td style={{padding:"5px 8px",textAlign:"right"}}>{u.total.toLocaleString("pt-BR")}</td>
+                 <td style={{padding:"5px 8px",textAlign:"right"}}>{u.parca.toLocaleString("pt-BR")}</td>
+                 <td style={{padding:"5px 8px",textAlign:"right"}}>
+                   <div style={{display:"flex",alignItems:"center",gap:8,justifyContent:"flex-end"}}>
+                     <div style={{width:80,height:8,background:"#E5E3DF",borderRadius:4,overflow:"hidden"}}>
+                       <div style={{width:`${barW}%`,height:"100%",background:cor,borderRadius:4}}/>
+                     </div>
+                     <span style={{fontWeight:700,color:cor,minWidth:42,textAlign:"right"}}>{u.pct.toFixed(1)}%</span>
+                   </div>
+                 </td>
+               </tr>;
+             })}</tbody>
+           </table>
+         </div>
+       </>}
+     </> : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados. Importe a base na aba <strong>Abrangência Parça</strong>.</p>},
 
     {key:"indicadores", titulo:"📊 Indicadores SLA / Agendamento / Aderência", cor:C.azul,
      conteudo: indA ? <>
@@ -369,7 +446,7 @@ ${sec("⏰ Coletas em Aberto (+25 dias)","#DC2626",
          </table>
        </>}
      </>
-     : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de SLA para o período selecionado. Carregue o CSV na aba <strong>Performance Coleta</strong>.</p>},
+     : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de SLA. Carregue o CSV na aba <strong>Performance Coleta</strong>.</p>},
 
     {key:"coletaReceb", titulo:"📦 Coleta x Recebimento", cor:C.verde,
      conteudo: crData?.rows
@@ -377,24 +454,23 @@ ${sec("⏰ Coletas em Aberto (+25 dias)","#DC2626",
        : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados. Importe na aba <strong>Performance Coleta → Coleta x Recebimento</strong>.</p>},
 
     {key:"csat", titulo:"⭐ CSAT", cor:"#7C3AED",
-     conteudo: csatAtual
-       ? <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-           <Kpi label="Share notas 4-5" valor={csatAtual.share!=null?`${(csatAtual.share*100).toFixed(1)}%`:"—"} cor="#7C3AED" sub={`${csatAtual.respostas||0} respostas${csatAtual.label?` · ${csatAtual.label}`:""}`}/>
-         </div>
-       : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de CSAT. Importe na aba <strong>CSAT</strong>.</p>},
+     conteudo: csatA ? <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+       <Kpi label={`Share notas 4-5${selA!=null?` (${lbl(selA)})`:""}`} valor={csatA.share!=null?`${(csatA.share*100).toFixed(1)}%`:"—"} cor="#7C3AED" sub={`${csatA.respostas||0} respostas${csatA.label?` · ${csatA.label}`:""}`}/>
+       {csatAnt&&<Kpi label={`Anterior${selAnt!=null?` (${lbl(selAnt)})`:""}`} valor={csatAnt.share!=null?`${(csatAnt.share*100).toFixed(1)}%`:"—"} cor={C.cinzaTexto} sub={`${csatAnt.respostas||0} respostas${csatAnt.label?` · ${csatAnt.label}`:""}`}/>}
+       {csatAnt&&csatA?.share!=null&&csatAnt?.share!=null&&(()=>{const d=Math.round((csatA.share-csatAnt.share)*1000)/10;return <Kpi label="Variação" valor={`${d>=0?"+":""}${d.toFixed(1)} p.p.`} cor={d>=0?C.verde:C.vermelho} sub="vs período anterior"/>;})()} 
+     </div>
+     : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de CSAT. Importe na aba <strong>CSAT</strong>.</p>},
 
-    {key:"emAberto", titulo:"⏰ Coletas em Aberto (+25 dias)", cor:C.vermelho,
-     conteudo: <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-       <Kpi label="Total ≥ 25 dias" valor={emAberto25.total.toString()} cor={emAberto25.total>0?C.vermelho:C.verde}/>
-       {emAberto25.parceiros.slice(0,6).map(p=><Kpi key={p.nome} label={p.nome} valor={p.count.toString()} cor={C.vermelho}/>)}
-     </div>},
+    {key:"emAberto", titulo:`⏰ Coletas em Aberto (+25 dias)${selA!=null?` — ${lbl(selA)}`: ""}`, cor:C.vermelho,
+     conteudo: <div style={{display:"flex",gap:12,flexWrap:"wrap"}}><Kpi label={`Total ≥ 25 dias${selA!=null?` (${lbl(selA)})`:""}`} valor={emAberto25.total.toString()} cor={emAberto25.total>0?C.vermelho:C.verde}/>
+       {emAberto25.parceiros.slice(0,6).map(p=><Kpi key={p.nome} label={p.nome} valor={p.count.toString()} cor={C.vermelho}/>)}</div>},
   ];
 
   return (
     <div style={{maxWidth:1100,margin:"0 auto",padding:"20px 24px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
         <div>
-          <div style={{fontSize:20,fontWeight:700}}>📋 Gerador de {nomeRel}</div>
+          <div style={{fontSize:20,fontWeight:700}}>📋 Gerador de Weekly</div>
           <div style={{fontSize:12,color:C.cinzaTexto}}>Selecione o período, preencha os racionais e exporte.</div>
         </div>
         <div style={{display:"flex",gap:8}}>
