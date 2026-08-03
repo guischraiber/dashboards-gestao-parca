@@ -654,8 +654,21 @@ export default function WeeklyApp() {
                   {Object.entries(csatPorParceiro)
                     .filter(([p])=>!filtroParcs.length||filtroParcs.includes(p))
                     .map(([p,dados],i)=>{
-                      const semA = selA!=null&&granular==="semana" ? dados.semanas.filter(s=>s.semana===selA) : dados.semanas;
-                      const semAntObj = selAnt!=null&&granular==="semana" ? dados.semanas.filter(s=>s.semana===selAnt) : [];
+                      // Filtra as semanas do parceiro pelo período selecionado (semana, mês ou trimestre)
+                      const semA = (() => {
+                        if(selA==null) return dados.semanas;
+                        if(granular==="semana") return dados.semanas.filter(s=>s.semana===selA);
+                        if(granular==="mes")    return dados.semanas.filter(s=>s.mes===selA);
+                        if(granular==="trim")   return dados.semanas.filter(s=>(TRIM_MESES[selA]||[]).includes(s.mes));
+                        return dados.semanas;
+                      })();
+                      const semAntObj = (() => {
+                        if(selAnt==null) return [];
+                        if(granular==="semana") return dados.semanas.filter(s=>s.semana===selAnt);
+                        if(granular==="mes")    return dados.semanas.filter(s=>s.mes===selAnt);
+                        if(granular==="trim")   return dados.semanas.filter(s=>(TRIM_MESES[selAnt]||[]).includes(s.mes));
+                        return [];
+                      })();
                       const aggShare = (ss) => { const tot=ss.reduce((a,s)=>a+(s.respostas||0),0); const n45=ss.reduce((a,s)=>a+Math.round((s.share||0)*(s.respostas||0)),0); return tot?n45/tot:null; };
                       const shareAt = aggShare(semA);
                       const shareAnt = semAntObj.length?aggShare(semAntObj):null;
