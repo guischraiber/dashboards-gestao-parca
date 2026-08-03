@@ -434,7 +434,7 @@ export default function WeeklyApp() {
                   return <tr key={t.nome} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2===0?"transparent":C.cinzaFundo}}>
                     <td style={{padding:"5px 8px",fontWeight:600}}>{t.nome}</td>
                     <td style={{padding:"5px 8px",textAlign:"right"}}>{t.coletas.toLocaleString("pt-BR")}</td>
-                    <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:C.verde}}>{t.share.toFixed(1)}%</td>
+                    <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:C.verde}}>{t.share!=null?t.share.toFixed(1)+"%" :"—"}</td>
                     {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right",color:C.cinzaTexto}}>{tAnt?tAnt.coletas.toLocaleString("pt-BR"):"—"}</td>}
                     {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right",color:C.cinzaTexto}}>{tAnt?`${tAnt.share.toFixed(1)}%`:"—"}</td>}
                     {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right"}}><DeltaChip d={d} inv={false} unit=" p.p."/></td>}
@@ -471,7 +471,7 @@ export default function WeeklyApp() {
                         <div style={{width:70,height:7,background:"#E5E3DF",borderRadius:4,overflow:"hidden"}}>
                           <div style={{width:`${Math.round(u.pct)}%`,height:"100%",background:cor,borderRadius:4}}/>
                         </div>
-                        <span style={{fontWeight:700,color:cor,minWidth:40,textAlign:"right"}}>{u.pct.toFixed(1)}%</span>
+                        <span style={{fontWeight:700,color:cor,minWidth:40,textAlign:"right"}}>{u.pct!=null?u.pct.toFixed(1)+"%":"—"}</span>
                       </div>
                     </td>
                   </tr>;
@@ -530,8 +530,8 @@ export default function WeeklyApp() {
                       const cor = m.d===0?C.cinzaTexto:(m.inv?m.d<=0:m.d>=0)?C.verde:C.vermelho;
                       return <div key={i} style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:8,padding:"8px 12px",minWidth:110}}>
                         <div style={{fontSize:11,color:C.cinzaTexto,marginBottom:2}}>{m.ind}</div>
-                        <div style={{fontSize:13,fontWeight:700,color:cor}}>{m.d>=0?"+":""}{m.d.toFixed(1)}{m.unit}</div>
-                        <div style={{fontSize:11,color:C.cinzaTexto}}>{fmtInd(m.ant,{inv:m.inv,unit:m.unit})} → {fmtInd(m.atual,{inv:m.inv,unit:m.unit})}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:cor}}>{m.d!=null?(m.d>=0?"+":"")+m.d.toFixed(1)+m.unit:"atual"}</div>
+                        <div style={{fontSize:11,color:C.cinzaTexto}}>{m.ant!=null?fmtInd(m.ant,{inv:m.inv,unit:m.unit})+"  →  ":""}{fmtInd(m.atual,{inv:m.inv,unit:m.unit})}</div>
                       </div>;
                     })}
                   </div>
