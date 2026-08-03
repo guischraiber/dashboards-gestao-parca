@@ -105,6 +105,11 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
     }));
   }, [rows, coordCidades]);
 
+  // Total geral de coletas (todas as linhas, sem filtro) para calcular share
+  const totalGeralColetas = useMemo(() => {
+    return rows.reduce((s, r) => s + r.abrangencia, 0);
+  }, [rows]);
+
   // ── Aplica filtros ──────────────────────────────────────────────────────────
   const pontosFiltrados = useMemo(() => {
     const ufsRegiao = filtroRegiao !== "Todas" ? REGIOES[filtroRegiao] : null;
@@ -287,35 +292,59 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
               </button>
             </div>
           </div>
+          {/* Resumo da seleção */}
+          {(()=>{
+            const vals = [...cidadesSelecionadas.values()];
+            const somaTotal = vals.reduce((s,x)=>s+x.coletasTotal, 0);
+            const somaParca = vals.reduce((s,x)=>s+x.coletasParca, 0);
+            const shareDaBase = totalGeralColetas > 0 ? (somaTotal / totalGeralColetas * 100) : 0;
+            return (
+              <div style={{ display:"flex", gap:12, marginBottom:10, flexWrap:"wrap" }}>
+                <div style={{ background:C.cinzaFundo, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+                  <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Total de coletas selecionadas</div>
+                  <div style={{ fontWeight:700, fontSize:18 }}>{somaTotal.toLocaleString("pt-BR")}</div>
+                </div>
+                <div style={{ background:C.cinzaFundo, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+                  <div style={{ color:C.cinzaTexto, marginBottom:2 }}>% da base total ({totalGeralColetas.toLocaleString("pt-BR")} coletas)</div>
+                  <div style={{ fontWeight:700, fontSize:18, color:C.laranja }}>{shareDaBase.toFixed(1)}%</div>
+                </div>
+                <div style={{ background:C.cinzaFundo, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+                  <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Coletas Parça selecionadas</div>
+                  <div style={{ fontWeight:700, fontSize:18, color:C.verde }}>{somaParca.toLocaleString("pt-BR")}</div>
+                </div>
+              </div>
+            );
+          })()}
           <div style={{ maxHeight:260, overflowY:"auto" }}>
             <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
               <thead style={{ position:"sticky", top:0, background:C.cinzaFundo }}>
                 <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
                   <th style={{ padding:"5px 8px" }}>Estado</th>
                   <th style={{ padding:"5px 8px" }}>Cidade</th>
-                  <th style={{ padding:"5px 8px", textAlign:"right" }}>Coletas totais</th>
-                  <th style={{ padding:"5px 8px", textAlign:"right" }}>Coletas Parça</th>
-                  <th style={{ padding:"5px 8px", textAlign:"right" }}>% Cobertura</th>
+                  <th style={{ padding:"5px 8px", textAlign:"right" }}>Coletas</th>
+                  <th style={{ padding:"5px 8px", textAlign:"right" }}>% da base</th>
+                  <th style={{ padding:"5px 8px", textAlign:"right" }}>% Cobertura Parça</th>
                   <th style={{ padding:"5px 8px" }}></th>
                 </tr>
               </thead>
               <tbody>
                 {[...cidadesSelecionadas.values()]
                   .sort((a,b) => b.coletasTotal - a.coletasTotal)
-                  .map((c, i) => (
+                  .map((c, i) => {
+                    const shareBase = totalGeralColetas > 0 ? (c.coletasTotal / totalGeralColetas * 100) : 0;
+                    return (
                     <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
                       <td style={{ padding:"5px 8px" }}>{c.uf}</td>
                       <td style={{ padding:"5px 8px", fontWeight:600 }}>{c.cidade}</td>
                       <td style={{ padding:"5px 8px", textAlign:"right" }}>{c.coletasTotal.toLocaleString("pt-BR")}</td>
-                      <td style={{ padding:"5px 8px", textAlign:"right" }}>{c.coletasParca.toLocaleString("pt-BR")}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right", fontWeight:700, color:C.laranja }}>{shareBase.toFixed(2)}%</td>
                       <td style={{ padding:"5px 8px", textAlign:"right", fontWeight:700, color:c.pct>=0.5?C.verde:C.vermelho }}>{(c.pct*100).toFixed(1)}%</td>
                       <td style={{ padding:"5px 8px" }}>
                         <button onClick={()=>setCidadesSelecionadas(prev=>{ const n=new Map(prev); n.delete(`${c.uf}|${c.cidade}`); return n; })}
                           style={{ background:"none", border:"none", cursor:"pointer", color:C.cinzaTexto, fontSize:14 }}>✕</button>
                       </td>
                     </tr>
-                  ))
-                }
+                  );})}
               </tbody>
             </table>
           </div>
