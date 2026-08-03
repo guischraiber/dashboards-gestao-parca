@@ -153,32 +153,92 @@ export default function WeeklyApp() {
         if(wEnriq.length>1) setSelAnt(wEnriq[wEnriq.length-2].s);
       }
 
+      // CSAT — Debug: loga o que tem no IDB pra diagnosticar estrutura
+      const csatIDBRaw = await lerIDB("csatParcaDB","dados","parsed");
+      console.log("[Weekly CSAT] IDB parsed:", JSON.stringify(csatIDBRaw)?.slice(0,500));
+      const csatIDBKeys = await new Promise(resolve=>{
+        try{const req=indexedDB.open("csatParcaDB",1);req.onsuccess=()=>{try{const tx=req.result.transaction("dados","readonly");const r=tx.objectStore("dados").getAllKeys();r.onsuccess=()=>resolve(r.result||[]);r.onerror=()=>resolve([]);}catch{resolve([])}};req.onerror=()=>resolve([]);}catch{resolve([])}
+      });
+      console.log("[Weekly CSAT] IDB keys:", csatIDBKeys);
+      const csatLS_debug = lerLS("csat_semanas_travadas",{});
+      console.log("[Weekly CSAT] localStorage keys:", Object.keys(csatLS_debug||{}).slice(0,5));
+      if(Array.isArray(csatLS_debug)&&csatLS_debug.length>0) console.log("[Weekly CSAT] LS[0] keys:", Object.keys(csatLS_debug[0]||{}));
+
       // CSAT
       let csatSlim = null;
+      let csatPP = {};
+
+      // Tenta IDB primeiro
       const csatIDB = await lerIDB("csatParcaDB","dados","parsed");
       if(csatIDB?.porSemana){
         const obj = {};
         csatIDB.porSemana.forEach(p=>{ if(p.semana) obj[`${csatIDB.anoAtual||new Date().getFullYear()}_W${p.semana}`]=p.slim||p; });
         csatSlim = obj;
-        // Por parceiro: parceiros dentro de cada semana
-        const pp={};
+        // Tenta extrair por parceiro do IDB
         csatIDB.porSemana.forEach(semObj=>{
-          (semObj.parceiros||[]).forEach(pc=>{
-            if(!pp[pc.nome]) pp[pc.nome]={semanas:[]};
-            pp[pc.nome].semanas.push({semana:semObj.semana,mes:semObj.mes,share:pc.share,respostas:pc.respostas||pc.total||0});
+          (semObj.parceiros||semObj.porParceiro||[]).forEach(pc=>{
+            const nome = pc.nome||pc.parceiro||pc.name;
+            if(!nome) return;
+            if(!csatPP[nome]) csatPP[nome]={semanas:[]};
+            csatPP[nome].semanas.push({
+              semana: semObj.semana, mes: semObj.mes,
+              share: pc.share!=null ? pc.share : (pc.notas45&&pc.total ? pc.notas45/pc.total : null),
+              respostas: pc.respostas||pc.total||0
+            });
           });
         });
-        setCsatPorParceiro(pp);
       }
+
+      // Fallback: localStorage csat_semanas_travadas
+      const csatLS = lerLS("csat_semanas_travadas", {});
+      const csatArr = Array.isArray(csatLS) ? csatLS : Object.values(csatLS);
+
       if(!csatSlim){
-        csatSlim = lerLS("csat_semanas_travadas",{});
-        if(Array.isArray(csatSlim)){
-          const obj = {};
-          csatSlim.forEach(p=>{ if(p.semana) obj[`${new Date().getFullYear()}_W${p.semana}`]=p; });
-          csatSlim = obj;
+        // Monta o objeto de semanas gerais
+        const obj = {};
+        csatArr.forEach(p=>{ if(p.semana) obj[`${new Date().getFullYear()}_W${p.semana}`]=p; });
+        csatSlim = obj;
+      }
+
+      // Tenta extrair por parceiro do localStorage se IDB não trouxe
+      if(Object.keys(csatPP).length===0){
+        csatArr.forEach(semObj=>{
+          // Verifica campos comuns de "por parceiro" no objeto de semana
+          const parcsData = semObj.parceiros||semObj.porParceiro||semObj.byPartner||[];
+          if(Array.isArray(parcsData)){
+            parcsData.forEach(pc=>{
+              const nome = pc.nome||pc.parceiro||pc.name||pc.label;
+              if(!nome) return;
+              if(!csatPP[nome]) csatPP[nome]={semanas:[]};
+              csatPP[nome].semanas.push({
+                semana: semObj.semana, mes: semObj.mes,
+                share: pc.share!=null ? pc.share : (pc.notas45&&pc.total ? pc.notas45/pc.total : null),
+                respostas: pc.respostas||pc.total||0
+              });
+            });
+          }
+        });
+      }
+
+      // Se ainda vazio, tenta ler do IDB com a chave "semanas" (outra estrutura possível)
+      if(Object.keys(csatPP).length===0){
+        const csatIDB2 = await lerIDB("csatParcaDB","dados","semanas");
+        if(csatIDB2 && typeof csatIDB2 === 'object'){
+          const arr2 = Array.isArray(csatIDB2) ? csatIDB2 : Object.values(csatIDB2);
+          arr2.forEach(semObj=>{
+            const parcsData = semObj.parceiros||semObj.porParceiro||[];
+            parcsData.forEach(pc=>{
+              const nome = pc.nome||pc.parceiro||pc.name;
+              if(!nome) return;
+              if(!csatPP[nome]) csatPP[nome]={semanas:[]};
+              csatPP[nome].semanas.push({semana:semObj.semana,mes:semObj.mes,share:pc.share,respostas:pc.respostas||0});
+            });
+          });
         }
       }
+
       setCsatSlots(csatSlim||{});
+      setCsatPorParceiro(csatPP);
 
       // Abrangência
       const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
