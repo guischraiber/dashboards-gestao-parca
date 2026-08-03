@@ -243,24 +243,21 @@ export default function WeeklyApp() {
   const parcsA   = useMemo(()=>calcParceiros(semsA, pd, filtroParcs.length?filtroParcs:null), [semsA,pd,filtroParcs]);
   const parcsAnt = useMemo(()=>calcParceiros(semsAnt,pd,filtroParcs.length?filtroParcs:null), [semsAnt,pd,filtroParcs]);
 
-  // Movimentos: todos os parceiros, sem threshold — agrupados por parceiro e por indicador
+  // Movimentos: todos os indicadores de todos os parceiros com dados (com ou sem variação)
   const movimentos = useMemo(()=>{
     const porParceiro = {};
-    const porIndicador = {};
-    INDICADORES.forEach(ind=>{
-      parcsA.forEach(pA=>{
-        const pAnt=parcsAnt.find(p=>p.nome===pA.nome);
-        if(!pAnt||pA[ind.key]==null||pAnt[ind.key]==null) return;
-        const d=Math.round((pA[ind.key]-pAnt[ind.key])*100)/100;
-        if(d===0) return;
-        const item={parceiro:pA.nome,ind:ind.label,key:ind.key,atual:pA[ind.key],ant:pAnt[ind.key],d,inv:ind.inv,unit:ind.unit};
+    parcsA.forEach(pA=>{
+      const pAnt = parcsAnt.find(p=>p.nome===pA.nome);
+      INDICADORES.forEach(ind=>{
+        // Mostra o indicador se tiver dado no período atual (com ou sem período anterior)
+        if(pA[ind.key]==null) return;
+        const d = pAnt&&pAnt[ind.key]!=null ? Math.round((pA[ind.key]-pAnt[ind.key])*100)/100 : null;
+        const item={parceiro:pA.nome,ind:ind.label,key:ind.key,atual:pA[ind.key],ant:pAnt?.[ind.key]??null,d,inv:ind.inv,unit:ind.unit};
         if(!porParceiro[pA.nome]) porParceiro[pA.nome]=[];
         porParceiro[pA.nome].push(item);
-        if(!porIndicador[ind.label]) porIndicador[ind.label]=[];
-        porIndicador[ind.label].push(item);
       });
     });
-    return {porParceiro, porIndicador};
+    return {porParceiro};
   },[parcsA,parcsAnt]);
 
   // ── CSAT por período ──────────────────────────────────────────────────────
@@ -410,17 +407,6 @@ export default function WeeklyApp() {
       <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:20,marginBottom:14}}>
         <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid ${C.laranja}`,paddingLeft:12,marginBottom:14}}>🗺️ Abrangência Parça</div>
 
-        {/* Filtro de parça dentro da abrangência */}
-        {transpParçaDisponiveis.length>0&&(
-          <div style={{marginBottom:12}}>
-            <span style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,marginRight:8}}>Filtrar transportadora Parça:</span>
-            {transpParçaDisponiveis.slice(0,12).map(t=>(
-              <button key={t} onClick={()=>toggleAbrangParc(t)} style={{...pill(abrangFiltroParcs.includes(t)),marginRight:4,marginBottom:4}}>{t}</button>
-            ))}
-            {abrangFiltroParcs.length>0&&<button onClick={()=>setAbrangFiltroParcs([])} style={{fontSize:11,color:C.cinzaTexto,background:"transparent",border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",marginLeft:4}}>Limpar</button>}
-          </div>
-        )}
-
         {cobParca ? <>
           {/* KPIs principais */}
           <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:12}}>
@@ -437,7 +423,8 @@ export default function WeeklyApp() {
                 <th style={{padding:"5px 8px",textAlign:"left",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>Transportadora</th>
                 <th style={{padding:"5px 8px",textAlign:"right",fontSize:10,fontWeight:700,color:C.azul,textTransform:"uppercase"}}>Coletas{selA!=null?` (${lbl(selA)})`:""}  </th>
                 <th style={{padding:"5px 8px",textAlign:"right",fontSize:10,fontWeight:700,color:C.azul,textTransform:"uppercase"}}>Share{selA!=null?` (${lbl(selA)})`:""}  </th>
-                {cobParcaAnt&&<th style={{padding:"5px 8px",textAlign:"right",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>Share ant.{selAnt!=null?` (${lbl(selAnt)})`:""}  </th>}
+                {cobParcaAnt&&<th style={{padding:"5px 8px",textAlign:"right",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>Coletas ant.{selAnt!=null?` (${lbl(selAnt)})`:""}  </th>}
+                {cobParcaAnt&&<th style={{padding:"5px 8px",textAlign:"right",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>Share ant.</th>}
                 {cobParcaAnt&&<th style={{padding:"5px 8px",textAlign:"right",fontSize:10,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>Δ</th>}
               </tr></thead>
               <tbody>
@@ -448,6 +435,7 @@ export default function WeeklyApp() {
                     <td style={{padding:"5px 8px",fontWeight:600}}>{t.nome}</td>
                     <td style={{padding:"5px 8px",textAlign:"right"}}>{t.coletas.toLocaleString("pt-BR")}</td>
                     <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:C.verde}}>{t.share.toFixed(1)}%</td>
+                    {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right",color:C.cinzaTexto}}>{tAnt?tAnt.coletas.toLocaleString("pt-BR"):"—"}</td>}
                     {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right",color:C.cinzaTexto}}>{tAnt?`${tAnt.share.toFixed(1)}%`:"—"}</td>}
                     {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right"}}><DeltaChip d={d} inv={false} unit=" p.p."/></td>}
                   </tr>;
@@ -456,6 +444,7 @@ export default function WeeklyApp() {
                   <td style={{padding:"5px 8px"}}>Total Parça</td>
                   <td style={{padding:"5px 8px",textAlign:"right"}}>{cobParca.parca.toLocaleString("pt-BR")}</td>
                   <td style={{padding:"5px 8px",textAlign:"right",color:C.verde}}>{cobParca.pct.toFixed(1)}%</td>
+                  {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right",color:C.cinzaTexto}}>{cobParcaAnt.parca.toLocaleString("pt-BR")}</td>}
                   {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right",color:C.cinzaTexto}}>{cobParcaAnt.pct.toFixed(1)}%</td>}
                   {cobParcaAnt&&<td style={{padding:"5px 8px",textAlign:"right"}}><DeltaChip d={Math.round((cobParca.pct-cobParcaAnt.pct)*100)/100} inv={false} unit=" p.p."/></td>}
                 </tr>
@@ -530,8 +519,7 @@ export default function WeeklyApp() {
 
           {/* Movimentos — por parceiro */}
           {Object.keys(movimentos.porParceiro).length>0&&(
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:13,fontWeight:700,marginBottom:10}}>⚡ Movimentos por parceiro</div>
+            <SecaoColapsavelSimples titulo="⚡ Movimentos por parceiro" cor={C.azul}>
               {Object.entries(movimentos.porParceiro)
                 .sort((a,b)=>{const ma=Math.max(...a[1].map(x=>Math.abs(x.d)));const mb=Math.max(...b[1].map(x=>Math.abs(x.d)));return mb-ma;})
                 .map(([parc,items])=>(
@@ -549,7 +537,7 @@ export default function WeeklyApp() {
                   </div>
                 </div>
               ))}
-            </div>
+            </SecaoColapsavelSimples>
           )}
 
         </> : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de SLA. Carregue o CSV na aba <strong>Performance Coleta</strong>.</p>}
@@ -569,10 +557,9 @@ export default function WeeklyApp() {
 
           {/* Por parceiro */}
           {Object.keys(crA.porParceiro).length>1&&(
-            <div style={{marginTop:16}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.cinzaTexto,marginBottom:8,textTransform:"uppercase"}}>Por parceiro</div>
+            <SecaoColapsavelSimples titulo="Por parceiro" cor={C.verde}>
               <CRTabelaParceiro crA={crA} crAnt={crRowsAnt.length>0?crAnt:null}/>
-            </div>
+            </SecaoColapsavelSimples>
           )}
         </> : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados. Importe na aba <strong>Performance Coleta → Coleta x Recebimento</strong>.</p>}
 
@@ -594,8 +581,7 @@ export default function WeeklyApp() {
 
           {/* Por parceiro */}
           {Object.keys(csatPorParceiro).length>0&&(
-            <div style={{marginTop:8}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.cinzaTexto,marginBottom:8,textTransform:"uppercase"}}>Por parceiro</div>
+            <SecaoColapsavelSimples titulo="Por parceiro" cor="#7C3AED">
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                 <thead><tr style={{background:C.cinzaFundo}}>
                   <th style={{padding:"5px 8px",textAlign:"left",fontSize:10,color:C.cinzaTexto,textTransform:"uppercase"}}>Parceiro</th>
@@ -625,7 +611,7 @@ export default function WeeklyApp() {
                   }
                 </tbody>
               </table>
-            </div>
+            </SecaoColapsavelSimples>
           )}
         </> : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de CSAT. Importe na aba <strong>CSAT</strong>.</p>}
 
@@ -642,6 +628,19 @@ function Kpi({label,valor,cor,sub}) {
       <div style={{fontSize:11,color:"#6B7280",marginBottom:4}}>{label}</div>
       <div style={{fontSize:22,fontWeight:700,color:cor||"#1C1917"}}>{valor}</div>
       {sub&&<div style={{fontSize:11,color:"#6B7280",marginTop:2}}>{sub}</div>}
+    </div>
+  );
+}
+
+function SecaoColapsavelSimples({titulo,cor,children}) {
+  const [visivel, setVisivel] = useState(true);
+  return (
+    <div style={{marginTop:12,border:`1px solid #E5E3DF`,borderRadius:10,overflow:"hidden"}}>
+      <div onClick={()=>setVisivel(!visivel)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#F8F7F4",cursor:"pointer",borderLeft:`3px solid ${cor}`}}>
+        <span style={{fontSize:13,fontWeight:700,color:cor}}>{titulo}</span>
+        <span style={{fontSize:14,color:"#6B7280"}}>{visivel?"▾":"▸"}</span>
+      </div>
+      {visivel&&<div style={{padding:14}}>{children}</div>}
     </div>
   );
 }
