@@ -506,7 +506,9 @@ export default function WeeklyApp() {
             <thead><tr style={{background:C.cinzaFundo}}>
               <th style={{padding:"6px 10px",textAlign:"left",fontSize:11,color:C.cinzaTexto,textTransform:"uppercase"}}>Indicador</th>
               <th style={{padding:"6px 10px",textAlign:"center",fontSize:11,color:C.azul,textTransform:"uppercase"}}>Atual{selA!=null?` (${lbl(selA)})`:""}  </th>
+              <th style={{padding:"6px 10px",textAlign:"center",fontSize:11,color:C.azul,textTransform:"uppercase"}}>Coletas{selA!=null?` (${lbl(selA)})`:""}  </th>
               {indAnt&&<th style={{padding:"6px 10px",textAlign:"center",fontSize:11,color:C.cinzaTexto,textTransform:"uppercase"}}>Anterior{selAnt!=null?` (${lbl(selAnt)})`:""}  </th>}
+              {indAnt&&<th style={{padding:"6px 10px",textAlign:"center",fontSize:11,color:C.cinzaTexto,textTransform:"uppercase"}}>Coletas ant.{selAnt!=null?` (${lbl(selAnt)})`:""}  </th>}
               {indAnt&&<th style={{padding:"6px 10px",textAlign:"center",fontSize:11,color:C.cinzaTexto,textTransform:"uppercase"}}>Δ</th>}
               <th style={{padding:"6px 10px",textAlign:"center",fontSize:11,color:C.cinzaTexto,textTransform:"uppercase"}}>Meta</th>
             </tr></thead>
@@ -517,7 +519,9 @@ export default function WeeklyApp() {
               return <tr key={ind.key} style={{borderTop:`1px solid ${C.cinzaBorda}`,background:i%2?"transparent":C.cinzaFundo}}>
                 <td style={{padding:"6px 10px",fontWeight:600}}>{ind.label}</td>
                 <td style={{padding:"6px 10px",textAlign:"center",fontWeight:700,color:corInd(vA,ind)}}>{fmtInd(vA,ind)}</td>
+                <td style={{padding:"6px 10px",textAlign:"center",color:C.cinzaTexto}}>{indA.total!=null?indA.total.toLocaleString("pt-BR"):"—"}</td>
                 {indAnt&&<td style={{padding:"6px 10px",textAlign:"center",color:C.cinzaTexto}}>{fmtInd(vAnt,ind)}</td>}
+                {indAnt&&<td style={{padding:"6px 10px",textAlign:"center",color:C.cinzaTexto}}>{indAnt.total!=null?indAnt.total.toLocaleString("pt-BR"):"—"}</td>}
                 {indAnt&&<td style={{padding:"6px 10px",textAlign:"center",fontWeight:700,color:dc}}>{dt}</td>}
                 <td style={{padding:"6px 10px",textAlign:"center",color:C.cinzaTexto}}>{ind.inv?`≤${ind.meta}${ind.unit}`:`${ind.meta}${ind.unit}`}</td>
               </tr>;
@@ -548,31 +552,6 @@ export default function WeeklyApp() {
             </div>
           )}
 
-          {/* Movimentos — por indicador */}
-          {Object.keys(movimentos.porIndicador).length>0&&(
-            <div>
-              <div style={{fontSize:13,fontWeight:700,marginBottom:10}}>📈 Movimentos por indicador</div>
-              {Object.entries(movimentos.porIndicador).map(([indLabel,items])=>(
-                <div key={indLabel} style={{marginBottom:10,padding:12,background:C.cinzaFundo,borderRadius:8,borderLeft:`3px solid ${C.laranja}`}}>
-                  <div style={{fontWeight:700,marginBottom:8,fontSize:13}}>{indLabel}</div>
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                    <thead><tr>
-                      {["Parceiro","Antes","Depois","Δ"].map(h=><th key={h} style={{padding:"4px 8px",textAlign:h==="Parceiro"?"left":"center",fontSize:10,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}
-                    </tr></thead>
-                    <tbody>{items.sort((a,b)=>Math.abs(b.d)-Math.abs(a.d)).map((m,i)=>{
-                      const cor=(m.inv?m.d<=0:m.d>=0)?C.verde:C.vermelho;
-                      return <tr key={i} style={{borderTop:`1px solid ${C.cinzaBorda}`}}>
-                        <td style={{padding:"4px 8px",fontWeight:600}}>{m.parceiro}</td>
-                        <td style={{padding:"4px 8px",textAlign:"center",color:C.cinzaTexto}}>{fmtInd(m.ant,{inv:m.inv,unit:m.unit})}</td>
-                        <td style={{padding:"4px 8px",textAlign:"center",fontWeight:700}}>{fmtInd(m.atual,{inv:m.inv,unit:m.unit})}</td>
-                        <td style={{padding:"4px 8px",textAlign:"center",fontWeight:700,color:cor}}>{m.d>=0?"+":""}{m.d.toFixed(1)}{m.unit}</td>
-                      </tr>;
-                    })}</tbody>
-                  </table>
-                </div>
-              ))}
-            </div>
-          )}
         </> : <p style={{color:C.cinzaTexto,fontSize:13,margin:0}}>Sem dados de SLA. Carregue o CSV na aba <strong>Performance Coleta</strong>.</p>}
 
         <RacionalBox valor={racionais.indicadores} onChange={v=>setR("indicadores",v)} label="Weekly"/>
