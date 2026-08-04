@@ -119,6 +119,7 @@ export default function WeeklyApp() {
   const [selA,        setSelA]        = useState(null);
   const [selAnt,      setSelAnt]      = useState(null);
   const [filtroParcs, setFiltroParcs] = useState([]); // filtro multi-parceiro global
+  const [mostrarFiltroParceiro, setMostrarFiltroParceiro] = useState(true);
   const [racionais,   setRacionais]   = useState({abrangencia:"",indicadores:"",coletaReceb:"",csat:""});
   const setR = (k,v) => setRacionais(p=>({...p,[k]:v}));
 
@@ -237,7 +238,19 @@ export default function WeeklyApp() {
         }
       }
 
-      setCsatSlots(csatSlim||{});
+      // Enriquece cada slot de CSAT com o campo `mes` se não existir
+      // (derivado da semana usando o mapa semana→mês do CSV bruto)
+      const csatSlimEnriq = {};
+      Object.entries(csatSlim||{}).forEach(([k,v])=>{
+        const semNum = v.semana || parseInt((k.split('_W')[1]||'0'));
+        const mesCalc = v.mes || semMes[semNum] || null;
+        csatSlimEnriq[k] = {...v, semana: semNum, mes: mesCalc};
+      });
+      // Enriquece também csatPorParceiro com o campo mes em cada semana
+      Object.values(csatPP).forEach(pp=>{
+        pp.semanas = pp.semanas.map(s=>({...s, mes: s.mes || semMes[s.semana] || null}));
+      });
+      setCsatSlots(csatSlimEnriq);
       setCsatPorParceiro(csatPP);
 
       // Abrangência
@@ -425,7 +438,25 @@ export default function WeeklyApp() {
             <div style={{fontSize:11,fontWeight:700,color:C.cinzaTexto,marginBottom:8,textTransform:"uppercase"}}>Granularidade</div>
             <div style={{display:"flex",gap:6}}>
               {[["semana","Semana"],["mes","Mês"],["trim","Trimestre"]].map(([k,l])=>(
-                <button key={k} onClick={()=>{setGranular(k);setSelA(null);setSelAnt(null);}} style={pill(granular===k)}>{l}</button>
+                <button key={k} onClick={()=>{
+                  setGranular(k);
+                  // Seleciona automaticamente o mais recente e o penúltimo ao trocar granularidade
+                  if(k==="semana"){
+                    const ss=weekly.map(w=>w.s).sort((a,b)=>a-b);
+                    setSelA(ss.length?ss[ss.length-1]:null);
+                    setSelAnt(ss.length>1?ss[ss.length-2]:null);
+                  } else if(k==="mes"){
+                    const ms=[...new Set(weekly.filter(w=>w.mes).map(w=>w.mes))].sort((a,b)=>a-b);
+                    setSelA(ms.length?ms[ms.length-1]:null);
+                    setSelAnt(ms.length>1?ms[ms.length-2]:null);
+                  } else if(k==="trim"){
+                    // Trimestre: calcula baseado nos meses disponíveis
+                    const ms=[...new Set(weekly.filter(w=>w.mes).map(w=>w.mes))];
+                    const trims=[...new Set(ms.map(m=>m<=3?1:m<=6?2:m<=9?3:4))].sort((a,b)=>a-b);
+                    setSelA(trims.length?trims[trims.length-1]:null);
+                    setSelAnt(trims.length>1?trims[trims.length-2]:null);
+                  }
+                }} style={pill(granular===k)}>{l}</button>
               ))}
             </div>
           </div>
@@ -449,16 +480,26 @@ export default function WeeklyApp() {
       {/* ── Filtro global por parceiro ── */}
       {todosParceiros.length>0&&(
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:16,marginBottom:16}}>
-          <div style={{fontSize:12,fontWeight:700,color:C.cinzaTexto,marginBottom:10,textTransform:"uppercase"}}>
-            Filtrar por parceiro (todos os indicadores)
-            {filtroParcs.length>0&&<button onClick={()=>setFiltroParcs([])} style={{marginLeft:10,fontSize:11,fontWeight:600,color:C.cinzaTexto,background:"transparent",border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"2px 8px",cursor:"pointer"}}>Limpar</button>}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:mostrarFiltroParceiro?10:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+              Filtrar por parceiro
+              {filtroParcs.length>0&&<span style={{background:C.laranja,color:"#fff",borderRadius:99,padding:"1px 7px",fontSize:11}}>{filtroParcs.length}</span>}
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              {filtroParcs.length>0&&<button onClick={()=>setFiltroParcs([])} style={{fontSize:11,fontWeight:600,color:C.cinzaTexto,background:"transparent",border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>Limpar</button>}
+              <button onClick={()=>setMostrarFiltroParceiro(v=>!v)} style={{fontSize:11,fontWeight:600,color:C.cinzaTexto,background:"transparent",border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>
+                {mostrarFiltroParceiro?"▾ Ocultar":"▸ Mostrar"}
+              </button>
+            </div>
           </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {todosParceiros.map(p=>(
-              <button key={p} onClick={()=>toggleParc(p)} style={pill(filtroParcs.includes(p))}>{p}</button>
-            ))}
-          </div>
-          {filtroParcs.length>0&&<div style={{fontSize:11,color:C.laranja,marginTop:8}}>Mostrando dados de: {filtroParcs.join(", ")}</div>}
+          {mostrarFiltroParceiro&&<>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {todosParceiros.map(p=>(
+                <button key={p} onClick={()=>toggleParc(p)} style={pill(filtroParcs.includes(p))}>{p}</button>
+              ))}
+            </div>
+            {filtroParcs.length>0&&<div style={{fontSize:11,color:C.laranja,marginTop:8}}>Mostrando dados de: {filtroParcs.join(", ")}</div>}
+          </>}
         </div>
       )}
 
