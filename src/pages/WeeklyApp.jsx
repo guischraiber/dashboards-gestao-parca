@@ -141,6 +141,31 @@ function calcParceirosFromSemanas(semanas, pd, filtroParcs) {
   }).filter(Boolean).sort((a,b)=>b.total-a.total);
 }
 
+// Feriados nacionais BR 2026 (igual ao SlaApp)
+const FERIADOS_CR = new Set([
+  "2026-01-01","2026-02-16","2026-02-17","2026-02-18",
+  "2026-04-03","2026-04-05","2026-04-21","2026-05-01","2026-06-04",
+  "2026-09-07","2026-10-12","2026-11-02","2026-11-15","2026-11-20","2026-12-25",
+]);
+
+// Calcula dias úteis entre duas datas (formato DD/MM/YYYY) — igual ao SlaApp
+function busdaysCR(d1Str, d2Str) {
+  if(!d1Str||!d2Str) return null;
+  try {
+    const [d1d,d1m,d1y]=d1Str.split("/"); const dt1=new Date(d1y,d1m-1,d1d);
+    const [d2d,d2m,d2y]=d2Str.split("/"); const dt2=new Date(d2y,d2m-1,d2d);
+    if(isNaN(dt1)||isNaN(dt2)||dt2<dt1) return null;
+    let dias=0, cur=new Date(dt1);
+    while(cur<dt2){
+      const dow=cur.getDay();
+      const iso=cur.toISOString().slice(0,10);
+      if(dow!==0&&dow!==6&&!FERIADOS_CR.has(iso)) dias++;
+      cur.setDate(cur.getDate()+1);
+    }
+    return dias;
+  } catch{ return null; }
+}
+
 // Helper pra calcular a análise CR do tipo {n, mesma, um, dois, tres, porParceiro}
 function calcCR(rows, filtroParcs) {
   const validas = rows
@@ -150,11 +175,9 @@ function calcCR(rows, filtroParcs) {
       return true;
     })
     .map(r => {
-      const parseDate = s => { const [d,m,y]=String(s||"").split("/"); return (d&&m&&y)?`${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`:null; };
-      const dc=parseDate(r["Data Coleta"]), dr=parseDate(r["Data de Recebimento da Coleta"]);
-      if(!dc||!dr) return null;
-      const dias = Math.round((new Date(dr)-new Date(dc))/(1000*60*60*24));
-      return dias>=0?{...r,dias}:null;
+      // Usa dias úteis igual à aba Performance Coleta (padrão da aba é diasCorridos=false)
+      const dias = busdaysCR(r["Data Coleta"], r["Data de Recebimento da Coleta"]);
+      return dias!=null?{...r,dias}:null;
     }).filter(Boolean);
   const n=validas.length;
   const mesma=validas.filter(r=>r.dias===0).length;
