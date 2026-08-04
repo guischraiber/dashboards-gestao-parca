@@ -228,14 +228,11 @@ export default function WeeklyApp() {
 
       // CSAT — Debug: loga o que tem no IDB pra diagnosticar estrutura
       const csatIDBRaw = await lerIDB("csatParcaDB","dados","parsed");
-      console.log("[Weekly CSAT] IDB parsed:", JSON.stringify(csatIDBRaw)?.slice(0,500));
       const csatIDBKeys = await new Promise(resolve=>{
         try{const req=indexedDB.open("csatParcaDB",1);req.onsuccess=()=>{try{const tx=req.result.transaction("dados","readonly");const r=tx.objectStore("dados").getAllKeys();r.onsuccess=()=>resolve(r.result||[]);r.onerror=()=>resolve([]);}catch{resolve([])}};req.onerror=()=>resolve([]);}catch{resolve([])}
       });
-      console.log("[Weekly CSAT] IDB keys:", csatIDBKeys);
       const csatLS_debug = lerLS("csat_semanas_travadas",{});
-      console.log("[Weekly CSAT] localStorage keys:", Object.keys(csatLS_debug||{}).slice(0,5));
-      if(Array.isArray(csatLS_debug)&&csatLS_debug.length>0) console.log("[Weekly CSAT] LS[0] keys:", Object.keys(csatLS_debug[0]||{}));
+      if(Array.isArray(csatLS_debug)&&csatLS_debug.length>0)
 
       // CSAT
       let csatSlim = null;
@@ -339,15 +336,13 @@ export default function WeeklyApp() {
       // Abrangência — usa rows do IDB diretamente (mes já é número, confirmado)
       const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
       setAbrangAtual(abr||null);
-      console.log("[Weekly Abrang LOAD] abr keys:", abr?Object.keys(abr):"null");
-      console.log("[Weekly Abrang LOAD] rows:", abr?.rows?.length, "csvRaw:", !!abr?.csvRaw);
+
       if(abr?.rows?.length){
         setAbrangRawRows(abr.rows);
         const jul = abr.rows.filter(r=>r.mes===7);
         const julParca = jul.filter(r=>r.validacao==="PARÇA");
         const tot = jul.reduce((s,r)=>s+(r.abrangencia||0),0);
         const parca = julParca.reduce((s,r)=>s+(r.abrangencia||0),0);
-        console.log("[Weekly Abrang LOAD] Jul linhas:", jul.length, "cobertura:", tot?(parca/tot*100).toFixed(2)+"%":"—");
       }
 
       // Coleta x Recebimento (atual e anterior)
@@ -488,21 +483,19 @@ export default function WeeklyApp() {
   const semanasDoA   = useMemo(()=>semsDoPeríodo(selA).map(w=>w.s),   [selA,semsDoPeríodo]);
   const semanasDoAnt = useMemo(()=>semsDoPeríodo(selAnt).map(w=>w.s), [selAnt,semsDoPeríodo]);
 
-  const calcCobParca = useCallback((sel, filtroA=[])=>{
-    // Usa linhas parseadas do csvRaw — mesma fonte e mesmo parser que a aba Abrangência
+  const calcCobParca = useCallback((sel, filtroA=[], gran)=>{
+    // gran passado como parâmetro — evita closure stale no granular
     if(!abrangRawRows.length) return null;
     let rows = abrangRawRows;
     if(sel!=null){
-      if(granular==="semana") rows = rows.filter(r=>r.semana===sel);
-      else if(granular==="mes")  rows = rows.filter(r=>r.mes===sel);
-      else if(granular==="trim") rows = rows.filter(r=>(TRIM_MESES[sel]||[]).includes(r.mes));
+      if(gran==="semana") rows = rows.filter(r=>r.semana===sel);
+      else if(gran==="mes")  rows = rows.filter(r=>r.mes===sel);
+      else if(gran==="trim") rows = rows.filter(r=>(TRIM_MESES[sel]||[]).includes(r.mes));
     }
     if(filtroA.length) rows = rows.filter(r=>filtroA.includes(r.transportadora));
-    console.log("[Weekly Abrang] sel=",sel,"granular=",granular,"abrangRawRows=",abrangRawRows.length,"rowsFiltradas=",rows.length);
     if(rows.length>0){
       const tot=rows.reduce((s,r)=>s+r.abrangencia,0);
       const parca=rows.filter(r=>r.validacao==="PARÇA").reduce((s,r)=>s+r.abrangencia,0);
-      console.log("[Weekly Abrang] total=",tot,"parca=",parca,"pct=",tot?(parca/tot*100).toFixed(2)+"%":"—");
     }
     if(!rows.length) return null;
     const total = rows.reduce((s,r)=>s+r.abrangencia,0);
@@ -523,8 +516,8 @@ export default function WeeklyApp() {
     return [...new Set(abrangRawRows.filter(r=>r.validacao==="PARÇA").map(r=>r.transportadora))].sort();
   },[abrangRawRows, granular]);
 
-  const cobParca    = useMemo(()=>calcCobParca(selA,   abrangFiltroParcs), [selA,   granular, calcCobParca, abrangFiltroParcs]);
-  const cobParcaAnt = useMemo(()=>calcCobParca(selAnt, abrangFiltroParcs), [selAnt, granular, calcCobParca, abrangFiltroParcs]);
+  const cobParca    = useMemo(()=>calcCobParca(selA,   abrangFiltroParcs, granular), [selA,   granular, calcCobParca, abrangFiltroParcs]);
+  const cobParcaAnt = useMemo(()=>calcCobParca(selAnt, abrangFiltroParcs, granular), [selAnt, granular, calcCobParca, abrangFiltroParcs]);
 
   // ── CR por período e parceiro ─────────────────────────────────────────────
   const crA   = useMemo(()=>calcCR(crRows, filtroParcs.length?filtroParcs:null),   [crRows,   filtroParcs]);
