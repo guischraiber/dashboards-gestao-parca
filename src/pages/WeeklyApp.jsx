@@ -17,6 +17,43 @@ const INDICADORES = [
 const MESES_NOME = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"};
 const TRIM_MESES = {1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
 
+// Calcula semana ISO (igual ao AbrangenciaApp)
+function semanaISO(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d)) return null;
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  return Math.ceil(((tmp - yearStart) / 86400000 + 1) / 7);
+}
+
+// Parser idêntico ao AbrangenciaApp — garante os mesmos resultados
+function parseCSVAbrangenciaW(texto) {
+  const { data } = Papa.parse(texto, { header:true, skipEmptyLines:true });
+  return data
+    .filter(r => r["Logistica Reversa Estado"] && r["Logistica Reversa Cidade"])
+    .map(r => {
+      const dataColeta = String(
+        r["Logistica Reversa Data Coleta Efetivada Date"] ||
+        r["Logistica Reversa Data Coleta Efetivada"] || ""
+      ).trim();
+      const mesRaw = String(r["Logistica Reversa Data Coleta Efetivada Month"] || "").trim();
+      const mes = mesRaw.includes("-")
+        ? parseInt(mesRaw.split("-")[1]) || null
+        : parseInt(mesRaw) || null;
+      const semana = semanaISO(dataColeta);
+      return {
+        validacao:      String(r["VALIDAÇÃO"] || r["Validação"] || r["Validacao"] || "").trim().toUpperCase(),
+        transportadora: String(r["Logistica Reversa Transportadora"] || "").trim(),
+        estado:         String(r["Logistica Reversa Estado"] || "").trim().toUpperCase(),
+        cidade:         String(r["Logistica Reversa Cidade"] || "").trim(),
+        abrangencia:    parseFloat(String(r["Abrangencia"] || "").replace(",", ".")) || 0,
+        dataColeta, semana, mes,
+      };
+    });
+}
+
 function lerLS(key, fallback) {
   try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch { return fallback; }
 }
@@ -136,7 +173,8 @@ export default function WeeklyApp() {
   const [rawRows,     setRawRows]     = useState([]);
   const [csatSlots,   setCsatSlots]   = useState({});
   const [csatPorParceiro, setCsatPorParceiro] = useState({});
-  const [abrangAtual, setAbrangAtual] = useState(null);
+  const [abrangAtual, setAbrangAtual] = useState(null);   // mantido para compatibilidade
+  const [abrangRawRows, setAbrangRawRows] = useState([]); // linhas parseadas do csvRaw
   const [crRows,      setCrRows]      = useState([]);
   const [crRowsAnt,   setCrRowsAnt]   = useState([]);
   const [loading,     setLoading]     = useState(true);
@@ -298,9 +336,16 @@ export default function WeeklyApp() {
       setCsatSlots(csatSlimEnriq);
       setCsatPorParceiro(csatPP);
 
-      // Abrangência
+      // Abrangência — lê o csvRaw e faz parse idêntico ao AbrangenciaApp
       const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
       setAbrangAtual(abr||null);
+      if(abr?.csvRaw){
+        // Usa o CSV bruto para garantir os mesmos resultados que a aba Abrangência
+        try { setAbrangRawRows(parseCSVAbrangenciaW(abr.csvRaw)); } catch{}
+      } else if(abr?.rows){
+        // Fallback: usa rows do IDB se csvRaw não estiver disponível
+        setAbrangRawRows(abr.rows);
+      }
 
       // Coleta x Recebimento (atual e anterior)
       const cr = await lerIDB("slaParcaDB","csvBruto","coletaRecebimento");
@@ -441,9 +486,9 @@ export default function WeeklyApp() {
   const semanasDoAnt = useMemo(()=>semsDoPeríodo(selAnt).map(w=>w.s), [selAnt,semsDoPeríodo]);
 
   const calcCobParca = useCallback((sel, filtroA=[])=>{
-    if(!abrangAtual?.rows) return null;
-    // Filtra exatamente como a aba Abrangência faz: por r.mes / r.semana diretamente
-    let rows = abrangAtual.rows;
+    // Usa linhas parseadas do csvRaw — mesma fonte e mesmo parser que a aba Abrangência
+    if(!abrangRawRows.length) return null;
+    let rows = abrangRawRows;
     if(sel!=null){
       if(granular==="semana") rows = rows.filter(r=>r.semana===sel);
       else if(granular==="mes")  rows = rows.filter(r=>r.mes===sel);
@@ -465,9 +510,9 @@ export default function WeeklyApp() {
 
   // Transportadoras parça disponíveis (para filtro na seção)
   const transpParçaDisponiveis = useMemo(()=>{
-    if(!abrangAtual?.rows) return [];
-    return [...new Set(abrangAtual.rows.filter(r=>r.validacao==="PARÇA").map(r=>r.transportadora))].sort();
-  },[abrangAtual]);
+    if(!abrangRawRows.length) return [];
+    return [...new Set(abrangRawRows.filter(r=>r.validacao==="PARÇA").map(r=>r.transportadora))].sort();
+  },[abrangRawRows]);
 
   const cobParca    = useMemo(()=>calcCobParca(selA,   abrangFiltroParcs), [selA,   granular, calcCobParca, abrangFiltroParcs]);
   const cobParcaAnt = useMemo(()=>calcCobParca(selAnt, abrangFiltroParcs), [selAnt, granular, calcCobParca, abrangFiltroParcs]);
