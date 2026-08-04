@@ -226,14 +226,6 @@ export default function WeeklyApp() {
         if(wEnriq.length>1) setSelAnt(wEnriq[wEnriq.length-2].s);
       }
 
-      // CSAT — Debug: loga o que tem no IDB pra diagnosticar estrutura
-      const csatIDBRaw = await lerIDB("csatParcaDB","dados","parsed");
-      const csatIDBKeys = await new Promise(resolve=>{
-        try{const req=indexedDB.open("csatParcaDB",1);req.onsuccess=()=>{try{const tx=req.result.transaction("dados","readonly");const r=tx.objectStore("dados").getAllKeys();r.onsuccess=()=>resolve(r.result||[]);r.onerror=()=>resolve([]);}catch{resolve([])}};req.onerror=()=>resolve([]);}catch{resolve([])}
-      });
-      const csatLS_debug = lerLS("csat_semanas_travadas",{});
-      if(Array.isArray(csatLS_debug)&&csatLS_debug.length>0)
-
       // CSAT
       let csatSlim = null;
       let csatPP = {};
