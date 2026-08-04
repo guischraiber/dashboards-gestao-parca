@@ -12,7 +12,6 @@ const INDICADORES = [
   {key:"agend",label:"Agendamento",  meta:95, inv:false, unit:"%"},
   {key:"ader", label:"Aderência",    meta:95, inv:false, unit:"%"},
   {key:"sla15",label:"SLA 15 dias",  meta:90, inv:false, unit:"%"},
-  {key:"aging",label:"Aging Médio",  meta:7,  inv:true,  unit:"d"},
 ];
 const MESES_NOME = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"};
 const TRIM_MESES = {1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
