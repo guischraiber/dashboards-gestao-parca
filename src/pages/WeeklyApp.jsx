@@ -825,7 +825,15 @@ export default function WeeklyApp() {
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* ── 4. CSAT ── */}
+      {/* ── 4. PROBLEMAS DE COLETA EM ABERTO ── */}
+      <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:20,marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid ${C.vermelho}`,paddingLeft:12,marginBottom:14}}>⚠️ Problemas de Coleta em Aberto</div>
+        <ProblemasColeta/>
+        <RacionalBox valor={racionais.problemas||""} onChange={v=>setR("problemas",v)} label="Weekly"/>
+      </div>
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* ── 5. CSAT ── */}
       <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:20,marginBottom:14}}>
         <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid #7C3AED`,paddingLeft:12,marginBottom:14}}>⭐ CSAT</div>
 
@@ -978,6 +986,104 @@ function AssuntosGerais() {
           background:"transparent",color:"#6B7280",fontSize:13,cursor:"pointer",fontWeight:600}}>
         + Adicionar assunto
       </button>
+    </div>
+  );
+}
+
+function ProblemasColeta() {
+  const LOJAS = ["Madeira Madeira", "Marketplace"];
+  const FAIXAS = ["0 a 2 dias", "2 a 5 dias", "5 a 10 dias", "10 a 30 dias"];
+
+  // Estado: {loja: {faixa: {aging: "", qtde: ""}}}
+  const [dados, setDados] = useState(() => {
+    const d = {};
+    LOJAS.forEach(l => {
+      d[l] = {};
+      FAIXAS.forEach(f => { d[l][f] = {qtde:""}; });
+    });
+    return d;
+  });
+
+  const upd = (loja, faixa, campo, val) =>
+    setDados(prev => ({...prev, [loja]: {...prev[loja], [faixa]: {...prev[loja][faixa], [campo]: val}}}));
+
+  const totalLoja = (loja, campo) =>
+    FAIXAS.reduce((s,f) => s + (parseFloat(dados[loja][f][campo])||0), 0);
+
+  const totalGeral = (campo) =>
+    LOJAS.reduce((s,l) => s + totalLoja(l,campo), 0);
+
+  const inp = (loja, faixa, campo) => (
+    <input
+      type="number" min="0"
+      value={dados[loja][faixa][campo]}
+      onChange={e => upd(loja, faixa, campo, e.target.value)}
+      placeholder="—"
+      style={{width:"100%", padding:"4px 6px", border:"1px solid #E5E3DF",
+        borderRadius:4, fontSize:12, textAlign:"right", background:"#F8F7F4",
+        outline:"none", boxSizing:"border-box"}}
+    />
+  );
+
+  const th = (txt, right) => (
+    <th style={{padding:"7px 10px", fontSize:11, fontWeight:700, color:"#6B7280",
+      textTransform:"uppercase", textAlign:right?"right":"left",
+      background:"#F8F7F4", whiteSpace:"nowrap"}}>{txt}</th>
+  );
+
+  const tdVal = (val, bold, cor) => (
+    <td style={{padding:"6px 10px", textAlign:"right", fontWeight:bold?700:400,
+      color:cor||"#1C1917", fontSize:12}}>{val||"—"}</td>
+  );
+
+  return (
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%", borderCollapse:"collapse", fontSize:12}}>
+        <thead>
+          <tr>
+            {th("Loja")}
+            {th("Aging")}
+            {th("Qtde Pedidos", true)}
+          </tr>
+        </thead>
+        <tbody>
+          {LOJAS.map((loja, li) => (
+            <>
+              {FAIXAS.map((faixa, fi) => (
+                <tr key={`${loja}-${faixa}`} style={{borderTop:"1px solid #E5E3DF",
+                  background:li%2===0?"transparent":"#F8F7F4"}}>
+                  {fi===0 && (
+                    <td rowSpan={FAIXAS.length} style={{padding:"6px 10px",
+                      fontWeight:700, verticalAlign:"top", borderRight:"1px solid #E5E3DF",
+                      color:"#1C1917", whiteSpace:"nowrap"}}>
+                      {loja}
+                    </td>
+                  )}
+                  <td style={{padding:"6px 10px", color:"#6B7280", whiteSpace:"nowrap"}}>{faixa}</td>
+                  <td style={{padding:"4px 6px", width:120}}>{inp(loja, faixa, "qtde")}</td>
+                </tr>
+              ))}
+              {/* Total da loja */}
+              <tr style={{borderTop:"2px solid #E5E3DF", background:li%2===0?"#EFF6FF":"#F0FDF4"}}>
+                <td colSpan={2} style={{padding:"6px 10px", fontWeight:700,
+                  fontSize:12, color:"#1C1917"}}>
+                  {loja} Total
+                </td>
+                {tdVal(totalLoja(loja,"qtde")||"—", true)}
+              </tr>
+            </>
+          ))}
+          {/* Total geral */}
+          <tr style={{borderTop:"2px solid #1C1917", background:"#1C1917"}}>
+            <td colSpan={2} style={{padding:"7px 10px", fontWeight:700,
+              fontSize:12, color:"#FFFFFF"}}>
+              Total Geral
+            </td>
+            <td style={{padding:"7px 10px", textAlign:"right", fontWeight:700,
+              color:"#FFFFFF", fontSize:12}}>{totalGeral("qtde")||"—"}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
