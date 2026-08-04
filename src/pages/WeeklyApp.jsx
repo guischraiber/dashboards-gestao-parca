@@ -336,16 +336,10 @@ export default function WeeklyApp() {
       setCsatSlots(csatSlimEnriq);
       setCsatPorParceiro(csatPP);
 
-      // Abrangência — lê o csvRaw e faz parse idêntico ao AbrangenciaApp
+      // Abrangência — usa rows do IDB diretamente (mes já é número, confirmado)
       const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
       setAbrangAtual(abr||null);
-      if(abr?.csvRaw){
-        // Usa o CSV bruto para garantir os mesmos resultados que a aba Abrangência
-        try { setAbrangRawRows(parseCSVAbrangenciaW(abr.csvRaw)); } catch{}
-      } else if(abr?.rows){
-        // Fallback: usa rows do IDB se csvRaw não estiver disponível
-        setAbrangRawRows(abr.rows);
-      }
+      if(abr?.rows?.length) setAbrangRawRows(abr.rows);
 
       // Coleta x Recebimento (atual e anterior)
       const cr = await lerIDB("slaParcaDB","csvBruto","coletaRecebimento");
@@ -512,7 +506,7 @@ export default function WeeklyApp() {
   const transpParçaDisponiveis = useMemo(()=>{
     if(!abrangRawRows.length) return [];
     return [...new Set(abrangRawRows.filter(r=>r.validacao==="PARÇA").map(r=>r.transportadora))].sort();
-  },[abrangRawRows]);
+  },[abrangRawRows, granular]);
 
   const cobParca    = useMemo(()=>calcCobParca(selA,   abrangFiltroParcs), [selA,   granular, calcCobParca, abrangFiltroParcs]);
   const cobParcaAnt = useMemo(()=>calcCobParca(selAnt, abrangFiltroParcs), [selAnt, granular, calcCobParca, abrangFiltroParcs]);
