@@ -339,7 +339,16 @@ export default function WeeklyApp() {
       // Abrangência — usa rows do IDB diretamente (mes já é número, confirmado)
       const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
       setAbrangAtual(abr||null);
-      if(abr?.rows?.length) setAbrangRawRows(abr.rows);
+      console.log("[Weekly Abrang LOAD] abr keys:", abr?Object.keys(abr):"null");
+      console.log("[Weekly Abrang LOAD] rows:", abr?.rows?.length, "csvRaw:", !!abr?.csvRaw);
+      if(abr?.rows?.length){
+        setAbrangRawRows(abr.rows);
+        const jul = abr.rows.filter(r=>r.mes===7);
+        const julParca = jul.filter(r=>r.validacao==="PARÇA");
+        const tot = jul.reduce((s,r)=>s+(r.abrangencia||0),0);
+        const parca = julParca.reduce((s,r)=>s+(r.abrangencia||0),0);
+        console.log("[Weekly Abrang LOAD] Jul linhas:", jul.length, "cobertura:", tot?(parca/tot*100).toFixed(2)+"%":"—");
+      }
 
       // Coleta x Recebimento (atual e anterior)
       const cr = await lerIDB("slaParcaDB","csvBruto","coletaRecebimento");
@@ -489,6 +498,12 @@ export default function WeeklyApp() {
       else if(granular==="trim") rows = rows.filter(r=>(TRIM_MESES[sel]||[]).includes(r.mes));
     }
     if(filtroA.length) rows = rows.filter(r=>filtroA.includes(r.transportadora));
+    console.log("[Weekly Abrang] sel=",sel,"granular=",granular,"abrangRawRows=",abrangRawRows.length,"rowsFiltradas=",rows.length);
+    if(rows.length>0){
+      const tot=rows.reduce((s,r)=>s+r.abrangencia,0);
+      const parca=rows.filter(r=>r.validacao==="PARÇA").reduce((s,r)=>s+r.abrangencia,0);
+      console.log("[Weekly Abrang] total=",tot,"parca=",parca,"pct=",tot?(parca/tot*100).toFixed(2)+"%":"—");
+    }
     if(!rows.length) return null;
     const total = rows.reduce((s,r)=>s+r.abrangencia,0);
     const parca = rows.filter(r=>r.validacao==="PARÇA").reduce((s,r)=>s+r.abrangencia,0);
