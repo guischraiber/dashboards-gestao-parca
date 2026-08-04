@@ -50,7 +50,33 @@ const fmtDelta = (d, inv) => {
   return {texto:`${sinal} ${Math.abs(d).toFixed(1)}`, cor};
 };
 
-function calcPeriodo(semanas, filtroParcs) {
+// Calcula indicadores direto das linhas brutas do CSV (igual ao SlaApp)
+// Isso garante exatamente os mesmos números que aparecem na aba Performance Coleta
+function calcFromRawRows(rows) {
+  const norm = v => String(v||"").trim().toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g,"");
+  const pct = (n,d) => d>0?Math.round(n/d*10000)/100:null;
+  const avg = arr => arr.length?Math.round(arr.reduce((a,b)=>a+b,0)/arr.length*100)/100:null;
+  const base = rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
+  if(base.length<1) return null;
+  const sp   = base.filter(r=>r["Problema_de_coleta"]!=="1"&&r["Problema_de_coleta"]!==1&&r["Problema_de_coleta"]!==true);
+  const isNao   = r=>norm(r["Vencido"])==="nao";
+  const isNao15 = r=>norm(r["Vencido (SLA Cliente)"])==="nao";
+  const isAg    = r=>r["Agendamento"]==="1"||r["Agendamento"]===1;
+  const isAder  = r=>{const v=r["Aderencia agendamento "]??r["Aderencia agendamento"];return v==="1"||v===1;};
+  const agOk    = base.filter(isAg);
+  const agingList = base.map(r=>{const v=parseFloat(r["Aging coleta efetivada"]);return !isNaN(v)&&v>=0?v:null;}).filter(v=>v!==null);
+  return {
+    total: base.length,
+    sla:   pct(base.filter(isNao).length,   base.length),
+    agend: pct(base.filter(isAg).length,    base.length),
+    ader:  pct(agOk.filter(isAder).length,  agOk.length),
+    sla15: pct(base.filter(isNao15).length, base.length),
+    aging: avg(agingList),
+  };
+}
+
+function calcPeriodoFromSemanas(semanas) {
+  // Agrega semanas ponderadas pelo total de coletas
   if(!semanas.length) return null;
   const tot = semanas.reduce((a,r)=>a+(r.total||0),0);
   if(!tot) return null;
@@ -62,7 +88,7 @@ function calcPeriodo(semanas, filtroParcs) {
   return { total:tot, sla:pw("sla"), agend:pw("agend"), ader:pw("ader"), sla15:pw("sla15"), aging:pw("aging") };
 }
 
-function calcParceiros(semanas, pd, filtroParcs) {
+function calcParceirosFromSemanas(semanas, pd, filtroParcs) {
   const parcs = filtroParcs && filtroParcs.length ? filtroParcs : Object.keys(pd);
   return parcs.map(p=>{
     const rows = semanas.map(w=>pd[p]?.[w.s]).filter(Boolean);
@@ -139,13 +165,21 @@ export default function WeeklyApp() {
       else if(typeof csvSalvo==="string") rows = Papa.parse(csvSalvo,{header:true,skipEmptyLines:true}).data;
       setRawRows(rows);
 
-      const semMes = {};
+      // semMes: mapa semana → Set de meses (uma semana pode cobrir 2 meses)
+      const semMesSet = {};
       rows.forEach(r=>{
         const s = parseInt(r["semana_Efetivada"]||r["Semana_Efetivada"]||0);
         const m = parseInt(r["Mês_Efetivada"]||r["Mes_Efetivada"]||r["mes_Efetivada"]||0);
-        if(s&&m&&!semMes[s]) semMes[s]=m;
+        if(s&&m){ if(!semMesSet[s]) semMesSet[s]=new Set(); semMesSet[s].add(m); }
       });
-      const wEnriq = wRaw.map(w=>({...w, mes: semMes[w.s]||null}));
+      // semMes: mês principal de cada semana (o mais frequente) para lookup simples
+      const semMes = {};
+      Object.entries(semMesSet).forEach(([s,ms])=>{ semMes[s]=[...ms][0]; });
+      // wEnriq: cada semana guarda seus meses possíveis
+      const wEnriq = wRaw.map(w=>({...w,
+        mes: semMes[w.s]||null,
+        meses: semMesSet[w.s]?[...semMesSet[w.s]]:[]
+      }));
       setWeekly(wEnriq.sort((a,b)=>a.s-b.s));
       setPd(pdRaw);
 
@@ -238,12 +272,23 @@ export default function WeeklyApp() {
         }
       }
 
-      // Enriquece cada slot de CSAT com o campo `mes` se não existir
-      // (derivado da semana usando o mapa semana→mês do CSV bruto)
+      // Enriquece cada slot de CSAT com o campo `mes` normalizado para número
+      // O campo mes pode vir como "2026-07" (string) ou 7 (número) — normaliza para número
+      const normalizarMesCsat = (mes, semana) => {
+        if(typeof mes === 'number' && mes >= 1 && mes <= 12) return mes;
+        if(typeof mes === 'string'){
+          // Formato "2026-07" → 7
+          if(mes.includes('-')) return parseInt(mes.split('-')[1]) || null;
+          const n = parseInt(mes);
+          if(n >= 1 && n <= 12) return n;
+        }
+        // Fallback: deriva da semana usando o mapa semana→mês
+        return semMes[semana] || null;
+      };
       const csatSlimEnriq = {};
       Object.entries(csatSlim||{}).forEach(([k,v])=>{
         const semNum = v.semana || parseInt((k.split('_W')[1]||'0'));
-        const mesCalc = v.mes || semMes[semNum] || null;
+        const mesCalc = normalizarMesCsat(v.mes, semNum);
         csatSlimEnriq[k] = {...v, semana: semNum, mes: mesCalc};
       });
       // Enriquece também csatPorParceiro com o campo mes em cada semana
@@ -279,42 +324,86 @@ export default function WeeklyApp() {
 
   // ── Períodos ──────────────────────────────────────────────────────────────
   const allSemanas = weekly.map(w=>w.s);
-  const allMeses   = useMemo(()=>[...new Set(weekly.filter(w=>w.mes).map(w=>w.mes))].sort((a,b)=>a-b),[weekly]);
+  const allMeses   = useMemo(()=>{
+    const ms = new Set();
+    weekly.forEach(w=>{ (w.meses||[]).forEach(m=>ms.add(m)); if(w.mes) ms.add(w.mes); });
+    return [...ms].sort((a,b)=>a-b);
+  },[weekly]);
   const periodos   = granular==="semana" ? allSemanas : granular==="mes" ? allMeses : [1,2,3,4];
   const lbl = useCallback(p=> granular==="semana"?`S${p}`:granular==="mes"?MESES_NOME[p]:`T${p}`,[granular]);
 
   const semsDoPeríodo = useCallback(sel=>{
     if(sel==null) return [];
     if(granular==="semana") return weekly.filter(w=>w.s===sel);
-    if(granular==="mes")    return weekly.filter(w=>w.mes===sel);
-    if(granular==="trim")   return weekly.filter(w=>(TRIM_MESES[sel]||[]).includes(w.mes));
+    // Para mês/trim: inclui semanas que TOCAM aquele mês (semanas de transição inclusive)
+    if(granular==="mes")    return weekly.filter(w=>w.meses?.includes(sel)||w.mes===sel);
+    if(granular==="trim")   return weekly.filter(w=>(TRIM_MESES[sel]||[]).some(m=>w.meses?.includes(m)||w.mes===m));
     return [];
   },[granular,weekly]);
 
   const semsA   = useMemo(()=>semsDoPeríodo(selA),   [selA,   semsDoPeríodo]);
   const semsAnt = useMemo(()=>semsDoPeríodo(selAnt), [selAnt, semsDoPeríodo]);
 
-  // Ponderação dos indicadores globais (respeitando filtro de parceiro)
-  const indA = useMemo(()=>{
-    if(!filtroParcs.length) return calcPeriodo(semsA);
-    // Agrega apenas pelos parceiros filtrados
-    const rows = semsA.flatMap(w=>filtroParcs.map(p=>pd[p]?.[w.s]).filter(Boolean));
-    if(!rows.length) return null;
-    const tot=rows.reduce((a,r)=>a+(r.total||0),0); if(!tot) return null;
-    const pw=key=>{let s=0,t=0;rows.forEach(r=>{if(r[key]!=null){s+=r[key]*(r.total||0);t+=r.total||0;}});return t?Math.round(s/t*100)/100:null;};
-    return {total:tot,sla:pw("sla"),agend:pw("agend"),ader:pw("ader"),sla15:pw("sla15"),aging:pw("aging")};
-  },[semsA,pd,filtroParcs]);
-  const indAnt = useMemo(()=>{
-    if(!filtroParcs.length) return calcPeriodo(semsAnt);
-    const rows = semsAnt.flatMap(w=>filtroParcs.map(p=>pd[p]?.[w.s]).filter(Boolean));
-    if(!rows.length) return null;
-    const tot=rows.reduce((a,r)=>a+(r.total||0),0); if(!tot) return null;
-    const pw=key=>{let s=0,t=0;rows.forEach(r=>{if(r[key]!=null){s+=r[key]*(r.total||0);t+=r.total||0;}});return t?Math.round(s/t*100)/100:null;};
-    return {total:tot,sla:pw("sla"),agend:pw("agend"),ader:pw("ader"),sla15:pw("sla15"),aging:pw("aging")};
-  },[semsAnt,pd,filtroParcs]);
+  // Helper: filtra rawRows pelo período e parceiros selecionados
+  const rawDoPeríodo = useCallback((sel)=>{
+    if(!rawRows.length||sel==null) return [];
+    if(granular==="semana"){
+      const s=String(sel);
+      return rawRows.filter(r=>{
+        const rs=String(parseInt(r["semana_Efetivada"]||r["Semana_Efetivada"]||0));
+        return rs===s && (filtroParcs.length===0||filtroParcs.includes(r["Transportadora"]));
+      });
+    }
+    if(granular==="mes"){
+      return rawRows.filter(r=>{
+        const m=parseInt(r["Mês_Efetivada"]||r["Mes_Efetivada"]||0);
+        return m===sel && (filtroParcs.length===0||filtroParcs.includes(r["Transportadora"]));
+      });
+    }
+    if(granular==="trim"){
+      const meses=TRIM_MESES[sel]||[];
+      return rawRows.filter(r=>{
+        const m=parseInt(r["Mês_Efetivada"]||r["Mes_Efetivada"]||0);
+        return meses.includes(m) && (filtroParcs.length===0||filtroParcs.includes(r["Transportadora"]));
+      });
+    }
+    return [];
+  },[rawRows,granular,filtroParcs]);
 
-  const parcsA   = useMemo(()=>calcParceiros(semsA, pd, filtroParcs.length?filtroParcs:null), [semsA,pd,filtroParcs]);
-  const parcsAnt = useMemo(()=>calcParceiros(semsAnt,pd,filtroParcs.length?filtroParcs:null), [semsAnt,pd,filtroParcs]);
+  // Indicadores globais: usa rawRows quando disponível (exatos = igual Performance Coleta)
+  // Fallback para semas agregadas quando não há CSV bruto carregado
+  const indA = useMemo(()=>{
+    const linhas = rawDoPeríodo(selA);
+    if(linhas.length>=1) return calcFromRawRows(linhas);
+    return calcPeriodoFromSemanas(semsA);
+  },[selA, rawDoPeríodo, semsA]);
+
+  const indAnt = useMemo(()=>{
+    const linhas = rawDoPeríodo(selAnt);
+    if(linhas.length>=1) return calcFromRawRows(linhas);
+    return calcPeriodoFromSemanas(semsAnt);
+  },[selAnt, rawDoPeríodo, semsAnt]);
+
+  const parcsA = useMemo(()=>{
+    // Se temos CSV bruto, calcula por parceiro diretamente
+    const linhas = rawDoPeríodo(selA);
+    if(linhas.length>=1){
+      const byParc={};
+      linhas.forEach(r=>{const p=r["Transportadora"]||"—";if(!byParc[p])byParc[p]=[];byParc[p].push(r);});
+      return Object.entries(byParc).map(([nome,rows])=>{const d=calcFromRawRows(rows);return d?{nome,...d}:null;}).filter(Boolean).sort((a,b)=>b.total-a.total);
+    }
+    return calcParceirosFromSemanas(semsA, pd, filtroParcs.length?filtroParcs:null);
+  },[selA, rawDoPeríodo, semsA, pd, filtroParcs]);
+
+  const parcsAnt = useMemo(()=>{
+    const linhas = rawDoPeríodo(selAnt);
+    if(linhas.length>=1){
+      const byParc={};
+      linhas.forEach(r=>{const p=r["Transportadora"]||"—";if(!byParc[p])byParc[p]=[];byParc[p].push(r);});
+      return Object.entries(byParc).map(([nome,rows])=>{const d=calcFromRawRows(rows);return d?{nome,...d}:null;}).filter(Boolean).sort((a,b)=>b.total-a.total);
+    }
+    return calcParceirosFromSemanas(semsAnt, pd, filtroParcs.length?filtroParcs:null);
+  },[selAnt, rawDoPeríodo, semsAnt, pd, filtroParcs]);
 
   // Movimentos: todos os indicadores de todos os parceiros com dados (com ou sem variação)
   const movimentos = useMemo(()=>{
@@ -339,7 +428,7 @@ export default function WeeklyApp() {
     const vals = Object.values(csatSlots).filter(v=>v&&v.semana);
     if(!vals.length) return null;
     if(granular==="semana") return vals.find(v=>v.semana===sel)||null;
-    if(granular==="mes"){ const vs=vals.filter(v=>v.mes===sel); if(!vs.length) return null; const tot=vs.reduce((s,v)=>s+(v.respostas||0),0); const n45=vs.reduce((s,v)=>s+(v.notas45!=null?v.notas45:Math.round((v.share||0)*(v.respostas||0))),0); return {share:tot?n45/tot:null,respostas:tot,label:MESES_NOME[sel]}; }
+    if(granular==="mes"){ const vs=vals.filter(v=>parseInt(v.mes)===sel); if(!vs.length) return null; const tot=vs.reduce((s,v)=>s+(v.respostas||0),0); const n45=vs.reduce((s,v)=>s+(v.notas45!=null?v.notas45:Math.round((v.share||0)*(v.respostas||0))),0); return {share:tot?n45/tot:null,respostas:tot,label:MESES_NOME[sel]}; }
     if(granular==="trim"){ const ms=TRIM_MESES[sel]||[]; const vs=vals.filter(v=>ms.includes(v.mes)); if(!vs.length) return null; const tot=vs.reduce((s,v)=>s+(v.respostas||0),0); const n45=vs.reduce((s,v)=>s+(v.notas45!=null?v.notas45:Math.round((v.share||0)*(v.respostas||0))),0); return {share:tot?n45/tot:null,respostas:tot,label:`T${sel}`}; }
     return vals.sort((a,b)=>(b.semana||0)-(a.semana||0))[0];
   },[csatSlots,granular]);
@@ -351,9 +440,15 @@ export default function WeeklyApp() {
   const semanasDoA   = useMemo(()=>semsDoPeríodo(selA).map(w=>w.s),   [selA,semsDoPeríodo]);
   const semanasDoAnt = useMemo(()=>semsDoPeríodo(selAnt).map(w=>w.s), [selAnt,semsDoPeríodo]);
 
-  const calcCobParca = useCallback((semanas, filtroA=[])=>{
+  const calcCobParca = useCallback((sel, filtroA=[])=>{
     if(!abrangAtual?.rows) return null;
-    let rows = semanas.length ? abrangAtual.rows.filter(r=>semanas.includes(r.semana)) : abrangAtual.rows;
+    // Filtra exatamente como a aba Abrangência faz: por r.mes / r.semana diretamente
+    let rows = abrangAtual.rows;
+    if(sel!=null){
+      if(granular==="semana") rows = rows.filter(r=>r.semana===sel);
+      else if(granular==="mes")  rows = rows.filter(r=>r.mes===sel);
+      else if(granular==="trim") rows = rows.filter(r=>(TRIM_MESES[sel]||[]).includes(r.mes));
+    }
     if(filtroA.length) rows = rows.filter(r=>filtroA.includes(r.transportadora));
     if(!rows.length) return null;
     const total = rows.reduce((s,r)=>s+r.abrangencia,0);
@@ -374,8 +469,8 @@ export default function WeeklyApp() {
     return [...new Set(abrangAtual.rows.filter(r=>r.validacao==="PARÇA").map(r=>r.transportadora))].sort();
   },[abrangAtual]);
 
-  const cobParca    = useMemo(()=>calcCobParca(semanasDoA, abrangFiltroParcs),   [semanasDoA,calcCobParca,abrangFiltroParcs]);
-  const cobParcaAnt = useMemo(()=>calcCobParca(semanasDoAnt, abrangFiltroParcs), [semanasDoAnt,calcCobParca,abrangFiltroParcs]);
+  const cobParca    = useMemo(()=>calcCobParca(selA,   abrangFiltroParcs), [selA,   granular, calcCobParca, abrangFiltroParcs]);
+  const cobParcaAnt = useMemo(()=>calcCobParca(selAnt, abrangFiltroParcs), [selAnt, granular, calcCobParca, abrangFiltroParcs]);
 
   // ── CR por período e parceiro ─────────────────────────────────────────────
   const crA   = useMemo(()=>calcCR(crRows, filtroParcs.length?filtroParcs:null),   [crRows,   filtroParcs]);
@@ -699,14 +794,14 @@ export default function WeeklyApp() {
                       const semA = (() => {
                         if(selA==null) return dados.semanas;
                         if(granular==="semana") return dados.semanas.filter(s=>s.semana===selA);
-                        if(granular==="mes")    return dados.semanas.filter(s=>s.mes===selA);
+                        if(granular==="mes")    return dados.semanas.filter(s=>parseInt(s.mes)===selA);
                         if(granular==="trim")   return dados.semanas.filter(s=>(TRIM_MESES[selA]||[]).includes(s.mes));
                         return dados.semanas;
                       })();
                       const semAntObj = (() => {
                         if(selAnt==null) return [];
                         if(granular==="semana") return dados.semanas.filter(s=>s.semana===selAnt);
-                        if(granular==="mes")    return dados.semanas.filter(s=>s.mes===selAnt);
+                        if(granular==="mes")    return dados.semanas.filter(s=>parseInt(s.mes)===selAnt);
                         if(granular==="trim")   return dados.semanas.filter(s=>(TRIM_MESES[selAnt]||[]).includes(s.mes));
                         return [];
                       })();
@@ -731,6 +826,14 @@ export default function WeeklyApp() {
 
         <RacionalBox valor={racionais.csat} onChange={v=>setR("csat",v)} label="Weekly"/>
       </div>
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* ── 5. ASSUNTOS GERAIS ── */}
+      <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:20,marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid ${C.cinzaTexto}`,paddingLeft:12,marginBottom:14}}>📋 Assuntos Gerais</div>
+        <AssuntosGerais/>
+      </div>
+
     </div>
   );
 }
@@ -766,6 +869,53 @@ function RacionalBox({valor,onChange,label}) {
       <textarea value={valor} onChange={e=>onChange(e.target.value)}
         placeholder={`Escreva o racional desta seção para o ${label}...`} rows={3}
         style={{width:"100%",padding:"10px 12px",borderRadius:8,border:"1px solid #E5E3DF",fontSize:13,fontFamily:"inherit",resize:"vertical",boxSizing:"border-box",background:"#F8F7F4",outline:"none"}}/>
+    </div>
+  );
+}
+
+function AssuntosGerais() {
+  const [itens, setItens] = useState([{id:1, texto:"", tipo:"info"}]);
+
+  const addItem = () => setItens(prev=>[...prev, {id:Date.now(), texto:"", tipo:"info"}]);
+  const removeItem = (id) => setItens(prev=>prev.filter(x=>x.id!==id));
+  const updateItem = (id, campo, val) => setItens(prev=>prev.map(x=>x.id===id?{...x,[campo]:val}:x));
+
+  const TIPOS = [
+    {key:"info",    label:"ℹ️ Info",    cor:"#2563EB"},
+    {key:"acao",    label:"✅ Ação",    cor:"#16A34A"},
+    {key:"alerta",  label:"⚠️ Alerta", cor:"#CA8A04"},
+    {key:"critico", label:"🔴 Crítico", cor:"#DC2626"},
+  ];
+
+  return (
+    <div>
+      <div style={{fontSize:12,color:"#6B7280",marginBottom:12}}>
+        Registre assuntos, ações e pontos de atenção que serão discutidos na reunião.
+      </div>
+      {itens.map((item,i)=>(
+        <div key={item.id} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:8}}>
+          <select value={item.tipo} onChange={e=>updateItem(item.id,"tipo",e.target.value)}
+            style={{padding:"7px 8px",borderRadius:6,border:"1px solid #E5E3DF",fontSize:12,fontWeight:600,
+              color:TIPOS.find(t=>t.key===item.tipo)?.cor||"#6B7280",flexShrink:0,background:"#F8F7F4"}}>
+            {TIPOS.map(t=><option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+          <textarea
+            value={item.texto}
+            onChange={e=>updateItem(item.id,"texto",e.target.value)}
+            placeholder={`Assunto ${i+1}...`}
+            rows={2}
+            style={{flex:1,padding:"7px 10px",borderRadius:6,border:"1px solid #E5E3DF",fontSize:13,
+              fontFamily:"inherit",resize:"vertical",outline:"none",background:"#F8F7F4"}}/>
+          <button onClick={()=>removeItem(item.id)}
+            style={{padding:"7px 8px",background:"none",border:"1px solid #E5E3DF",borderRadius:6,
+              cursor:"pointer",color:"#6B7280",fontSize:14,flexShrink:0}}>✕</button>
+        </div>
+      ))}
+      <button onClick={addItem}
+        style={{marginTop:4,padding:"7px 14px",borderRadius:6,border:"1.5px dashed #E5E3DF",
+          background:"transparent",color:"#6B7280",fontSize:13,cursor:"pointer",fontWeight:600}}>
+        + Adicionar assunto
+      </button>
     </div>
   );
 }
