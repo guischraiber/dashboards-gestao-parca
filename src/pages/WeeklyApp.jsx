@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
-import { sincronizarAntesDeLer } from "../syncRemoto";
+import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 
 const C = {
   laranja:"#F97316", verde:"#16A34A", vermelho:"#DC2626", amarelo:"#CA8A04",
@@ -302,20 +302,25 @@ export default function WeeklyApp() {
 
   // Carrega os racionais salvos sempre que a semana/mês/trimestre selecionado mudar
   useEffect(() => {
-    const chave = `${granular}_${selA ?? "geral"}`;
-    const todos = lerLS(WEEKLY_RACIONAIS_KEY, {});
-    racionaisCarregados.current = false;
-    setRacionais({ ...RACIONAIS_VAZIO, ...(todos[chave] || {}) });
-    racionaisCarregados.current = true;
+    (async () => {
+      await sincronizarAntesDeLer(["weeklyRacionais"]); // busca o que outras pessoas escreveram antes de ler local
+      const chave = `${granular}_${selA ?? "geral"}`;
+      const todos = lerLS(WEEKLY_RACIONAIS_KEY, {});
+      racionaisCarregados.current = false;
+      setRacionais({ ...RACIONAIS_VAZIO, ...(todos[chave] || {}) });
+      racionaisCarregados.current = true;
+    })();
   }, [selA, granular]);
 
-  // Salva automaticamente sempre que uma observação/racional for editada
+  // Salva automaticamente sempre que uma observação/racional for editada, e publica
+  // pro backend compartilhado para que outras pessoas vejam o mesmo texto
   useEffect(() => {
     if (!racionaisCarregados.current) return; // não sobrescreve enquanto ainda está carregando
     const chave = `${granular}_${selA ?? "geral"}`;
     const todos = lerLS(WEEKLY_RACIONAIS_KEY, {});
     todos[chave] = racionais;
     salvarLS(WEEKLY_RACIONAIS_KEY, todos);
+    publicarApósImportar("weeklyRacionais", todos);
   }, [racionais, selA, granular]);
 
   // Estado minimizável para subseções da abrangência
@@ -1097,21 +1102,26 @@ function AssuntosGerais({ semana, granular }) {
 
   // Carrega os assuntos salvos sempre que o período selecionado (semana/mês/trimestre) mudar
   useEffect(() => {
-    const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
-    const todos = lerLS(WEEKLY_ASSUNTOS_KEY, {});
-    const salvos = todos[chave];
-    itensCarregados.current = false;
-    setItens(salvos && salvos.length ? salvos : ASSUNTO_VAZIO);
-    itensCarregados.current = true;
+    (async () => {
+      await sincronizarAntesDeLer(["weeklyAssuntos"]); // busca o que outras pessoas escreveram antes de ler local
+      const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
+      const todos = lerLS(WEEKLY_ASSUNTOS_KEY, {});
+      const salvos = todos[chave];
+      itensCarregados.current = false;
+      setItens(salvos && salvos.length ? salvos : ASSUNTO_VAZIO);
+      itensCarregados.current = true;
+    })();
   }, [semana, granular]);
 
-  // Salva automaticamente sempre que um assunto for adicionado, editado ou removido
+  // Salva automaticamente sempre que um assunto for adicionado, editado ou removido, e
+  // publica pro backend compartilhado para que outras pessoas vejam os mesmos assuntos
   useEffect(() => {
     if (!itensCarregados.current) return; // não sobrescreve enquanto ainda está carregando
     const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
     const todos = lerLS(WEEKLY_ASSUNTOS_KEY, {});
     todos[chave] = itens;
     salvarLS(WEEKLY_ASSUNTOS_KEY, todos);
+    publicarApósImportar("weeklyAssuntos", todos);
   }, [itens, semana, granular]);
 
   const addItem = () => setItens(prev=>[...prev, {id:Date.now(), texto:"", tipo:"info"}]);
@@ -1178,20 +1188,25 @@ function ProblemasColeta({ semana, granular }) {
 
   // Carrega os dados salvos sempre que o período selecionado (semana/mês/trimestre) mudar
   useEffect(() => {
-    const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
-    const todos = lerLS(WEEKLY_PROBLEMAS_KEY, {});
-    dadosCarregados.current = false;
-    setDados(todos[chave] || dadosVazio());
-    dadosCarregados.current = true;
+    (async () => {
+      await sincronizarAntesDeLer(["weeklyProblemas"]); // busca o que outras pessoas preencheram antes de ler local
+      const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
+      const todos = lerLS(WEEKLY_PROBLEMAS_KEY, {});
+      dadosCarregados.current = false;
+      setDados(todos[chave] || dadosVazio());
+      dadosCarregados.current = true;
+    })();
   }, [semana, granular]);
 
-  // Salva automaticamente sempre que uma quantidade for preenchida/alterada
+  // Salva automaticamente sempre que uma quantidade for preenchida/alterada, e publica
+  // pro backend compartilhado para que outras pessoas vejam os mesmos números
   useEffect(() => {
     if (!dadosCarregados.current) return; // não sobrescreve enquanto ainda está carregando
     const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
     const todos = lerLS(WEEKLY_PROBLEMAS_KEY, {});
     todos[chave] = dados;
     salvarLS(WEEKLY_PROBLEMAS_KEY, todos);
+    publicarApósImportar("weeklyProblemas", todos);
   }, [dados, semana, granular]);
 
   const upd = (loja, faixa, campo, val) =>
