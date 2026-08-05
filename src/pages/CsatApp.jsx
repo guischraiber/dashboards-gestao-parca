@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import Papa from "papaparse";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
+import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 
 const C = {
   laranja: "#F97316", laranjaLight: "#FED7AA",
@@ -197,6 +198,7 @@ function parseData(respostas, disparos, semanasTravadas = {}) {
     }
   });
   salvarSemanasTravadas(novasTravadas);
+  publicarApósImportar("csatSemanasTrav", novasTravadas);
 
   // Unir semanas travadas + semanas novas ainda não travadas
   const todasSemanas = [...new Set([
@@ -429,10 +431,16 @@ export default function CsatApp() {
 
   // Carregar dados da URL ao montar
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const d = params.get("d");
-    if (d) {
-      decodeData(d).then(decoded => {
+    (async () => {
+      // Busca a versão mais recente do backend compartilhado antes de ler local —
+      // assim quem só visualiza (nunca importou nada) já vê os dados de quem importou.
+      await sincronizarAntesDeLer(["csatDadosImportados", "csatSemanasTrav"]);
+      setTravadas(carregarSemanasTravadas()); // relê após a sincronização acima
+
+      const params = new URLSearchParams(window.location.search);
+      const d = params.get("d");
+      if (d) {
+        const decoded = await decodeData(d);
         if (decoded) {
           // Restaurar estrutura completa com comentários vazios
           const restored = {
@@ -470,14 +478,12 @@ export default function CsatApp() {
             salvarSemanasTravadas(merged);
           }
         }
-      });
-      return;
-    }
+        return;
+      }
 
-    // Sem link na URL: tenta restaurar os últimos CSVs importados (respostas +
-    // disparos) que ficaram salvos no IndexedDB, igual ao que já acontece
-    // com o SLA e o Score.
-    (async () => {
+      // Sem link na URL: tenta restaurar os últimos CSVs importados (respostas +
+      // disparos) que ficaram salvos no IndexedDB, igual ao que já acontece
+      // com o SLA e o Score.
       const salvo = await carregarDadosImportados();
       if (salvo && salvo.respostas && salvo.disparos) {
         setRespostas(salvo.respostas);
@@ -519,6 +525,9 @@ export default function CsatApp() {
           calcular(respostasRef.current, disparosRef.current);
           salvarDadosImportados(respostasRef.current, disparosRef.current, novo).then(ok => {
             setAvisoPersistencia(!ok);
+          });
+          publicarApósImportar("csatDadosImportados", {
+            respostas: respostasRef.current, disparos: disparosRef.current, arquivosInfo: novo,
           });
         }
         return novo;
