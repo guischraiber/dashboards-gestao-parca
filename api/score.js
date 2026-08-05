@@ -6,8 +6,9 @@
 // Prioriza o "modelo único" (data/modelo.csv) se existir; senão cai no fluxo
 // avançado de 3 planilhas (data/indicadores.csv, faturamento.csv, taxas.csv).
 //
-// Variável de ambiente necessária (configurar no painel do Vercel):
-//   ADMIN_TOKEN -> senha simples para a visão interna (?admin=SENHA)
+// Sem parâmetro "codigo": devolve a visão completa (interna). Não há mais
+// exigência de token — quem tiver o link do dashboard acessa direto, no mesmo
+// nível de proteção das outras abas (Weekly, SLA, CSAT, Abrangência).
 
 import fs from 'fs';
 import path from 'path';
@@ -27,8 +28,6 @@ function lerArquivoDados(nome) {
 }
 
 export default async function handler(req, res) {
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-
   let linhas, avisos;
   try {
     if (existeArquivo('modelo.csv')) {
@@ -46,7 +45,7 @@ export default async function handler(req, res) {
     });
   }
 
-  const { codigo, admin } = req.query;
+  const { codigo } = req.query;
 
   // --- Rota do parceiro: retorna só as linhas daquele código (histórico dele) ---
   if (codigo) {
@@ -59,21 +58,14 @@ export default async function handler(req, res) {
     return res.status(200).json({ rows: filtradas });
   }
 
-  // --- Rota interna (admin): retorna tudo, protegida por token simples ---
-  if (admin) {
-    if (!ADMIN_TOKEN || admin !== ADMIN_TOKEN) {
-      return res.status(401).json({ error: 'Token de acesso inválido.' });
+  // --- Sem "codigo": visão interna completa (sem exigência de token) ---
+  let historico = [];
+  try {
+    if (existeArquivo('historico.json')) {
+      historico = JSON.parse(lerArquivoDados('historico.json'));
     }
-    let historico = [];
-    try {
-      if (existeArquivo('historico.json')) {
-        historico = JSON.parse(lerArquivoDados('historico.json'));
-      }
-    } catch {
-      // se o histórico estiver corrompido, apenas não mostra, sem quebrar o resto
-    }
-    return res.status(200).json({ rows: linhas, avisos, historico });
+  } catch {
+    // se o histórico estiver corrompido, apenas não mostra, sem quebrar o resto
   }
-
-  return res.status(400).json({ error: 'Informe ?codigo=XXX (parceiro) ou ?admin=TOKEN (interno).' });
+  return res.status(200).json({ rows: linhas, avisos, historico });
 }
