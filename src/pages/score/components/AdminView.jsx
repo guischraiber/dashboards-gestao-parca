@@ -4,7 +4,7 @@ import RulesSection from './RulesSection.jsx';
 import ImportView from './ImportView.jsx';
 import ConfigView from './ConfigView.jsx';
 
-export default function AdminView({ token }) {
+export default function AdminView() {
   const [estado, setEstado] = useState('carregando');
   const [erroMsg, setErroMsg] = useState('');
   const [linhasCruas, setLinhasCruas] = useState([]);
@@ -30,7 +30,7 @@ export default function AdminView({ token }) {
   function carregar() {
     setEstado('carregando');
     Promise.all([
-      fetch(`/api/score?admin=${encodeURIComponent(token)}`).then(async (r) => {
+      fetch('/api/score').then(async (r) => {
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || 'Erro desconhecido');
         return data;
@@ -50,7 +50,7 @@ export default function AdminView({ token }) {
       });
   }
 
-  useEffect(carregar, [token]);
+  useEffect(carregar, []);
 
   const linhas = useMemo(() => (config ? agruparEProcessar(linhasCruas, config) : []), [linhasCruas, config]);
 
@@ -150,7 +150,7 @@ export default function AdminView({ token }) {
         </div>
 
         {aba === 'importar' ? (
-          <ImportView token={token} historico={historico} onImportado={carregar} />
+          <ImportView historico={historico} onImportado={carregar} />
         ) : aba === 'regras' && config ? (
           <RulesSection config={config} />
         ) : (
@@ -440,7 +440,7 @@ export default function AdminView({ token }) {
         </div>
       )}
 
-      {aba === 'configuracoes' && <ConfigView token={token} configInicial={config} onSalvo={setConfig} />}
+      {aba === 'configuracoes' && <ConfigView configInicial={config} onSalvo={setConfig} />}
 
       {aba === 'regras' && <RulesSection config={config} />}
 
