@@ -62,6 +62,7 @@ function salvarLS(key, val) {
 // Chaves de persistência do Weekly (racionais e assuntos gerais), por semana selecionada
 const WEEKLY_RACIONAIS_KEY = "weeklyParca_racionais";
 const WEEKLY_ASSUNTOS_KEY  = "weeklyParca_assuntosGerais";
+const WEEKLY_PROBLEMAS_KEY = "weeklyParca_problemasColeta";
 async function lerIDB(dbName, storeName, key) {
   return new Promise((resolve) => {
     try {
@@ -852,8 +853,11 @@ export default function WeeklyApp() {
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* ── 4. PROBLEMAS DE COLETA EM ABERTO ── */}
       <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:20,marginBottom:14}}>
-        <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid ${C.vermelho}`,paddingLeft:12,marginBottom:14}}>⚠️ Problemas de Coleta em Aberto</div>
-        <ProblemasColeta/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+          <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid ${C.vermelho}`,paddingLeft:12}}>⚠️ Problemas de Coleta em Aberto</div>
+          <span style={{fontSize:10,color:"#9CA3AF"}}>💾 salvo automaticamente</span>
+        </div>
+        <ProblemasColeta semana={selA} granular={granular}/>
         <RacionalBox valor={racionais.problemas||""} onChange={v=>setR("problemas",v)} label="Weekly"/>
       </div>
 
@@ -1041,19 +1045,40 @@ function AssuntosGerais({ semana, granular }) {
   );
 }
 
-function ProblemasColeta() {
+function ProblemasColeta({ semana, granular }) {
   const LOJAS = ["Madeira Madeira", "Marketplace"];
   const FAIXAS = ["0 a 2 dias", "2 a 5 dias", "5 a 10 dias", "10 a 30 dias"];
 
-  // Estado: {loja: {faixa: {aging: "", qtde: ""}}}
-  const [dados, setDados] = useState(() => {
+  const dadosVazio = () => {
     const d = {};
     LOJAS.forEach(l => {
       d[l] = {};
       FAIXAS.forEach(f => { d[l][f] = {qtde:""}; });
     });
     return d;
-  });
+  };
+
+  // Estado: {loja: {faixa: {aging: "", qtde: ""}}}
+  const [dados, setDados] = useState(dadosVazio);
+  const dadosCarregados = useRef(false); // evita salvar antes de carregar o localStorage do período
+
+  // Carrega os dados salvos sempre que o período selecionado (semana/mês/trimestre) mudar
+  useEffect(() => {
+    const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
+    const todos = lerLS(WEEKLY_PROBLEMAS_KEY, {});
+    dadosCarregados.current = false;
+    setDados(todos[chave] || dadosVazio());
+    dadosCarregados.current = true;
+  }, [semana, granular]);
+
+  // Salva automaticamente sempre que uma quantidade for preenchida/alterada
+  useEffect(() => {
+    if (!dadosCarregados.current) return; // não sobrescreve enquanto ainda está carregando
+    const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
+    const todos = lerLS(WEEKLY_PROBLEMAS_KEY, {});
+    todos[chave] = dados;
+    salvarLS(WEEKLY_PROBLEMAS_KEY, todos);
+  }, [dados, semana, granular]);
 
   const upd = (loja, faixa, campo, val) =>
     setDados(prev => ({...prev, [loja]: {...prev[loja], [faixa]: {...prev[loja][faixa], [campo]: val}}}));
