@@ -4,7 +4,9 @@
 //
 // Variáveis de ambiente necessárias (configurar no painel do Vercel):
 //   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional)
-//   ADMIN_TOKEN
+//
+// Não há mais exigência de ADMIN_TOKEN — quem acessa a visão interna do
+// dashboard (sem link de parceiro) já pode importar direto.
 
 import { commitArquivo, lerArquivoGithub, credenciaisGithub } from '../src/pages/score/lib/github.js';
 
@@ -22,12 +24,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Use POST para importar.' });
   }
 
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-  const { admin, modeloCsv, indicadoresCsv, faturamentoCsv, taxasCsv, nomes } = req.body || {};
-
-  if (!ADMIN_TOKEN || admin !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Token de acesso inválido.' });
-  }
+  const { modeloCsv, indicadoresCsv, faturamentoCsv, taxasCsv, nomes } = req.body || {};
 
   const { token, owner, repo, branch } = credenciaisGithub();
   if (!token || !owner || !repo) {
