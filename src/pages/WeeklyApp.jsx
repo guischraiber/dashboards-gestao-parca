@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
 
 const C = {
@@ -56,6 +56,12 @@ function parseCSVAbrangenciaW(texto) {
 function lerLS(key, fallback) {
   try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch { return fallback; }
 }
+function salvarLS(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* storage indisponível/cheio — ignora */ }
+}
+// Chaves de persistência do Weekly (racionais e assuntos gerais), por semana selecionada
+const WEEKLY_RACIONAIS_KEY = "weeklyParca_racionais";
+const WEEKLY_ASSUNTOS_KEY  = "weeklyParca_assuntosGerais";
 async function lerIDB(dbName, storeName, key) {
   return new Promise((resolve) => {
     try {
@@ -206,8 +212,28 @@ export default function WeeklyApp() {
   const [selAnt,      setSelAnt]      = useState(null);
   const [filtroParcs, setFiltroParcs] = useState([]); // filtro multi-parceiro global
   const [mostrarFiltroParceiro, setMostrarFiltroParceiro] = useState(true);
-  const [racionais,   setRacionais]   = useState({abrangencia:"",indicadores:"",coletaReceb:"",csat:""});
+  const RACIONAIS_VAZIO = {abrangencia:"",indicadores:"",coletaReceb:"",problemas:"",csat:""};
+  const [racionais,   setRacionais]   = useState(RACIONAIS_VAZIO);
   const setR = (k,v) => setRacionais(p=>({...p,[k]:v}));
+  const racionaisCarregados = useRef(false); // evita salvar antes de carregar o localStorage da semana
+
+  // Carrega os racionais salvos sempre que a semana/mês/trimestre selecionado mudar
+  useEffect(() => {
+    const chave = `${granular}_${selA ?? "geral"}`;
+    const todos = lerLS(WEEKLY_RACIONAIS_KEY, {});
+    racionaisCarregados.current = false;
+    setRacionais({ ...RACIONAIS_VAZIO, ...(todos[chave] || {}) });
+    racionaisCarregados.current = true;
+  }, [selA, granular]);
+
+  // Salva automaticamente sempre que uma observação/racional for editada
+  useEffect(() => {
+    if (!racionaisCarregados.current) return; // não sobrescreve enquanto ainda está carregando
+    const chave = `${granular}_${selA ?? "geral"}`;
+    const todos = lerLS(WEEKLY_RACIONAIS_KEY, {});
+    todos[chave] = racionais;
+    salvarLS(WEEKLY_RACIONAIS_KEY, todos);
+  }, [racionais, selA, granular]);
 
   // Estado minimizável para subseções da abrangência
   const [abrangMostrarEstados, setAbrangMostrarEstados] = useState(true);
@@ -900,7 +926,7 @@ export default function WeeklyApp() {
       {/* ── 5. ASSUNTOS GERAIS ── */}
       <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:20,marginBottom:14}}>
         <div style={{fontWeight:700,fontSize:15,borderLeft:`4px solid ${C.cinzaTexto}`,paddingLeft:12,marginBottom:14}}>📋 Assuntos Gerais</div>
-        <AssuntosGerais/>
+        <AssuntosGerais semana={selA} granular={granular}/>
       </div>
 
     </div>
@@ -934,7 +960,10 @@ function SecaoColapsavelSimples({titulo,cor,children}) {
 function RacionalBox({valor,onChange,label}) {
   return (
     <div style={{marginTop:14}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#6B7280",marginBottom:6,textTransform:"uppercase"}}>Racional / Observações</div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Racional / Observações</div>
+        <span style={{fontSize:10,color:"#9CA3AF"}}>💾 salvo automaticamente</span>
+      </div>
       <textarea value={valor} onChange={e=>onChange(e.target.value)}
         placeholder={`Escreva o racional desta seção para o ${label}...`} rows={3}
         style={{width:"100%",padding:"10px 12px",borderRadius:8,border:"1px solid #E5E3DF",fontSize:13,fontFamily:"inherit",resize:"vertical",boxSizing:"border-box",background:"#F8F7F4",outline:"none"}}/>
@@ -942,8 +971,30 @@ function RacionalBox({valor,onChange,label}) {
   );
 }
 
-function AssuntosGerais() {
-  const [itens, setItens] = useState([{id:1, texto:"", tipo:"info"}]);
+const ASSUNTO_VAZIO = [{id:1, texto:"", tipo:"info"}];
+
+function AssuntosGerais({ semana, granular }) {
+  const [itens, setItens] = useState(ASSUNTO_VAZIO);
+  const itensCarregados = useRef(false); // evita salvar antes de carregar o localStorage do período
+
+  // Carrega os assuntos salvos sempre que o período selecionado (semana/mês/trimestre) mudar
+  useEffect(() => {
+    const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
+    const todos = lerLS(WEEKLY_ASSUNTOS_KEY, {});
+    const salvos = todos[chave];
+    itensCarregados.current = false;
+    setItens(salvos && salvos.length ? salvos : ASSUNTO_VAZIO);
+    itensCarregados.current = true;
+  }, [semana, granular]);
+
+  // Salva automaticamente sempre que um assunto for adicionado, editado ou removido
+  useEffect(() => {
+    if (!itensCarregados.current) return; // não sobrescreve enquanto ainda está carregando
+    const chave = `${granular ?? "semana"}_${semana ?? "geral"}`;
+    const todos = lerLS(WEEKLY_ASSUNTOS_KEY, {});
+    todos[chave] = itens;
+    salvarLS(WEEKLY_ASSUNTOS_KEY, todos);
+  }, [itens, semana, granular]);
 
   const addItem = () => setItens(prev=>[...prev, {id:Date.now(), texto:"", tipo:"info"}]);
   const removeItem = (id) => setItens(prev=>prev.filter(x=>x.id!==id));
@@ -958,8 +1009,9 @@ function AssuntosGerais() {
 
   return (
     <div>
-      <div style={{fontSize:12,color:"#6B7280",marginBottom:12}}>
-        Registre assuntos, ações e pontos de atenção que serão discutidos na reunião.
+      <div style={{fontSize:12,color:"#6B7280",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span>Registre assuntos, ações e pontos de atenção que serão discutidos na reunião.</span>
+        <span style={{fontSize:10,color:"#9CA3AF",whiteSpace:"nowrap"}}>💾 salvo automaticamente</span>
       </div>
       {itens.map((item,i)=>(
         <div key={item.id} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:8}}>
