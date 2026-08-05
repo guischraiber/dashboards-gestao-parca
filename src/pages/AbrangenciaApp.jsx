@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
 import MapaAbrangencia from "./MapaAbrangencia.jsx";
+import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 const COORD_CIDADES = {
   "CE|Fortaleza":[-3.7166,-38.5423],
   "RS|Santa Maria":[-29.6868,-53.8149],
@@ -2168,6 +2169,9 @@ export default function AbrangenciaApp() {
 
   useEffect(() => {
     (async () => {
+      // Busca a versão mais recente do backend compartilhado antes de ler local —
+      // assim quem só visualiza (nunca importou nada) já vê os dados de quem importou.
+      await sincronizarAntesDeLer(["abrangAtual", "abrangAnterior"]);
       const a = await carregarChave("atual");
       const b = await carregarChave("anterior");
       if (a) setAtual(a);
@@ -2186,8 +2190,13 @@ export default function AbrangenciaApp() {
         // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
         // independente do estado React (que pode estar desatualizado dentro do closure).
         const atualSalvo = await carregarChave("atual");
-        if (atualSalvo) { await salvarChave("anterior", atualSalvo); setAnterior(atualSalvo);; }
+        if (atualSalvo) {
+          await salvarChave("anterior", atualSalvo);
+          setAnterior(atualSalvo);
+          publicarApósImportar("abrangAnterior", atualSalvo);
+        }
         const ok = await salvarChave("atual", novoAtual);
+        publicarApósImportar("abrangAtual", novoAtual);
         setAtual(novoAtual); setAvisoPersist(!ok);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
     };
