@@ -1,6 +1,9 @@
 // api/salvarConfig.js
 // Recebe uma configuração nova (pesos, faixas de nota, faixas finais), valida,
 // e salva em data/config.json no GitHub — disparando redeploy automático.
+//
+// Não há mais exigência de ADMIN_TOKEN — quem acessa a visão interna do
+// dashboard (sem link de parceiro) já pode alterar as regras direto.
 
 import { commitArquivo, credenciaisGithub } from '../src/pages/score/lib/github.js';
 
@@ -58,12 +61,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Use POST.' });
   }
 
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-  const { admin, config } = req.body || {};
-
-  if (!ADMIN_TOKEN || admin !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Token de acesso inválido.' });
-  }
+  const { config } = req.body || {};
 
   const erros = validar(config);
   if (erros.length > 0) {
