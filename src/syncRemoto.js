@@ -109,6 +109,9 @@ export const PONTOS_SYNC = {
   csatSemanasTrav: { tipo:"ls",  chaveLocal:"csat_semanas_travadas", store:"csat", key:"semanas_travadas" },
   abrangAtual:     { tipo:"idb", dbName:"abrangenciaParcaDB2", storeName:"dados",    chaveLocal:"atual",                     store:"abrangencia", key:"dados_atual" },
   abrangAnterior:  { tipo:"idb", dbName:"abrangenciaParcaDB2", storeName:"dados",    chaveLocal:"anterior",                  store:"abrangencia", key:"dados_anterior" },
+  weeklyRacionais: { tipo:"ls",  chaveLocal:"weeklyParca_racionais",       store:"weekly", key:"racionais" },
+  weeklyAssuntos:  { tipo:"ls",  chaveLocal:"weeklyParca_assuntosGerais",  store:"weekly", key:"assuntosGerais" },
+  weeklyProblemas: { tipo:"ls",  chaveLocal:"weeklyParca_problemasColeta", store:"weekly", key:"problemasColeta" },
 };
 
 async function lerLocal(ponto) {
