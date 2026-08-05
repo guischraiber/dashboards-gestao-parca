@@ -95,6 +95,7 @@ export const PONTOS_SYNC = {
   slaWeekly:       { tipo:"ls",  chaveLocal:"slaParca_weekly", store:"sla", key:"weekly" },
   slaPd:           { tipo:"ls",  chaveLocal:"slaParca_pd",     store:"sla", key:"pd" },
   csatParsed:      { tipo:"idb", dbName:"csatParcaDB",         storeName:"dados",    chaveLocal:"parsed",                    store:"csat",        key:"dados_parsed" },
+  csatDadosImportados: { tipo:"idb", dbName:"csatParcaDB",     storeName:"dadosImportados", chaveLocal:"atual",              store:"csat",        key:"dadosImportados_atual" },
   csatSemanasTrav: { tipo:"ls",  chaveLocal:"csat_semanas_travadas", store:"csat", key:"semanas_travadas" },
   abrangAtual:     { tipo:"idb", dbName:"abrangenciaParcaDB2", storeName:"dados",    chaveLocal:"atual",                     store:"abrangencia", key:"dados_atual" },
   abrangAnterior:  { tipo:"idb", dbName:"abrangenciaParcaDB2", storeName:"dados",    chaveLocal:"anterior",                  store:"abrangencia", key:"dados_anterior" },
