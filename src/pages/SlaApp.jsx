@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell, Legend } from "recharts";
 import Papa from "papaparse";
+import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 
 // ── Cores ─────────────────────────────────────────────────────────────────────
 const C = {
@@ -899,6 +900,7 @@ const AbaFaturamentoColeta = ({
         setNome(file.name);
         setLoading("");
         salvarFatRowsAtual(results.data, file.name).then(ok => setAvisoPersistencia(!ok));
+        publicarApósImportar("slaCr", { rows: results.data, nome: file.name });
       },
       error: (err) => {
         setErroUpload(`Não consegui processar este arquivo: ${err?.message || err}`);
@@ -1215,6 +1217,7 @@ export default function SlaApp() {
   // que dependem dele — diferente da Semana, que usa o cache já calculado).
   useEffect(() => {
     (async () => {
+      await sincronizarAntesDeLer(["slaCsvAtual"]); // traz a versão publicada por quem importou, se houver
       const salvo = await carregarRawRowsSalvo();
       if (salvo && salvo.rows && salvo.rows.length) {
         setRawRows(salvo.rows);
@@ -1228,11 +1231,23 @@ export default function SlaApp() {
   // já é feito para o CSV principal acima.
   useEffect(() => {
     (async () => {
+      await sincronizarAntesDeLer(["slaCr","slaCrAnterior"]);
       const salvo = await carregarFatRowsSalvo();
       if (salvo && salvo.rows && salvo.rows.length) {
         setFatRows(salvo.rows);
         setFatNome(salvo.nome || "");
       }
+    })();
+  }, []);
+
+  // Sincroniza os indicadores agregados por semana/parceiro (slaParca_weekly, slaParca_pd)
+  // com o backend remoto — necessário porque esses estados são lidos direto do localStorage
+  // no momento em que o componente monta (antes da sincronização terminar).
+  useEffect(() => {
+    (async () => {
+      await sincronizarAntesDeLer(["slaWeekly","slaPd"]);
+      try { const w = localStorage.getItem("slaParca_weekly"); if (w) setWeeklyExtra(JSON.parse(w)); } catch {}
+      try { const p = localStorage.getItem("slaParca_pd");     if (p) setPdExtra(JSON.parse(p));     } catch {}
     })();
   }, []);
 
@@ -1490,6 +1505,7 @@ export default function SlaApp() {
         const rows=parseCSV(ev.target.result);
         setRawRows(rows);
         salvarRawRowsAtual(rows, file.name).then(ok => setAvisoPersistenciaCSV(!ok));
+        publicarApósImportar("slaCsvAtual", { rows, nome: file.name });
 
         // Semanas válidas do CSV
         const coletado=rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
@@ -1523,6 +1539,7 @@ export default function SlaApp() {
             ...calculadas                                         // semanas do CSV atualizadas
           ].sort((a,b)=>a.s-b.s);
           try{localStorage.setItem("slaParca_weekly",JSON.stringify(merged));}catch{}
+          publicarApósImportar("slaWeekly", merged);
           return merged;
         });
 
@@ -1542,6 +1559,7 @@ export default function SlaApp() {
             });
           });
           try{localStorage.setItem("slaParca_pd",JSON.stringify(merged));}catch{}
+          publicarApósImportar("slaPd", merged);
           return merged;
         });
 
