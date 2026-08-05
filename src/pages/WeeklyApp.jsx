@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
+import { sincronizarAntesDeLer } from "../syncRemoto";
 
 const C = {
   laranja:"#F97316", verde:"#16A34A", vermelho:"#DC2626", amarelo:"#CA8A04",
@@ -325,6 +326,13 @@ export default function WeeklyApp() {
 
   useEffect(()=>{
     (async()=>{
+      // Busca a versão mais recente do backend compartilhado (se configurado) e
+      // atualiza a cópia local antes de ler — assim quem só visualiza não precisa importar.
+      await sincronizarAntesDeLer([
+        "slaCsvAtual","slaCr","slaCrAnterior","slaWeekly","slaPd",
+        "csatParsed","csatSemanasTrav","abrangAtual","abrangAnterior",
+      ]);
+
       const wRaw = lerLS("slaParca_weekly",[]);
       const pdRaw= lerLS("slaParca_pd",{});
       const csvSalvo = await lerIDB("slaParcaDB","csvBruto","atual");
