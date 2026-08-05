@@ -22,6 +22,15 @@ function syncConfigurado() {
   return true; // a função /api/sync sempre existe no mesmo deploy; se faltar env var, ela retorna erro 500 (ver console)
 }
 
+// ── Compressão (mesma técnica já usada no botão "Compartilhar link") ───────
+// Bases grandes (ex: CSAT com comentários em texto livre) excediam o limite de
+// tamanho de requisição sem isso. CompressionStream é nativo do navegador.
+async function comprimir(objeto) {
+  const bytes = new TextEncoder().encode(JSON.stringify(objeto));
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  return await new Response(stream).arrayBuffer();
+}
+
 // ── Chamadas genéricas ao backend ───────────────────────────────────────────
 export async function lerRemoto(store, key) {
   if (!syncConfigurado()) return null;
@@ -38,10 +47,11 @@ export async function lerRemoto(store, key) {
 export async function salvarRemoto(store, key, dados) {
   if (!syncConfigurado()) return false;
   try {
-    const r = await fetch(SYNC_URL, {
+    const comprimido = await comprimir(dados);
+    const r = await fetch(`${SYNC_URL}?store=${encodeURIComponent(store)}&key=${encodeURIComponent(key)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ store, key, dados }),
+      headers: { "Content-Type": "application/octet-stream" },
+      body: comprimido,
     });
     return r.ok;
   } catch {
