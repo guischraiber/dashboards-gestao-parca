@@ -16,6 +16,87 @@ const INDICADORES = [
 const MESES_NOME = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"};
 const TRIM_MESES = {1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
 
+// ── Normalização de nomes de parceiro ──────────────────────────────────────────
+// SLA, Coleta x Recebimento e CSAT grafam o mesmo parceiro de formas diferentes
+// (maiúsculas/minúsculas, sufixo de transportadora, razão social completa, etc),
+// então o mesmo parceiro aparecia várias vezes no filtro. Resolvido em 2 passos:
+//   1) Limpeza automática — remove acento, padroniza maiúsculas e espaços.
+//      Resolve duplicidade que é só diferença de grafia (ex: "Safari" vs "SAFARI").
+//   2) Tabela de apelidos (PARCEIRO_ALIASES) — casos em que o nome é realmente
+//      diferente entre as bases (razão social, sufixo de filial/serviço etc).
+//      Sempre que aparecer uma nova duplicidade no filtro, adicione uma linha aqui.
+function limparNomeParceiro(nome) {
+  return String(nome || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentuação
+    .trim().replace(/\s+/g, " ")
+    .toUpperCase();
+}
+
+// Sufixos genéricos (tag de canal/serviço/razão social) que não identificam o parceiro
+// — removidos do final do nome, com quantas repetições forem necessárias.
+const SUFIXOS_GENERICOS_PARCEIRO = [
+  "OUTLET","OUTL","TRANSPORTES","TRANSPORTE","TRANSP","MONTAGEM",
+  "LTDA","EIRELI","EPP","CIA","S A","SA","ME",
+];
+function removerSufixosGenericos(nomeLimpo) {
+  let n = nomeLimpo, mudou = true;
+  while (mudou) {
+    mudou = false;
+    for (const suf of SUFIXOS_GENERICOS_PARCEIRO) {
+      const re = new RegExp(`\\s${suf}$`);
+      if (re.test(n)) { n = n.replace(re, "").trim(); mudou = true; }
+    }
+  }
+  return n;
+}
+
+// Apelidos conhecidos: chave = nome já limpo (sem acento, maiúsculo) como aparece na base,
+// valor = nome canônico a exibir/agrupar no filtro. Edite/complete conforme surgirem novos casos.
+const PARCEIRO_ALIASES = {
+  "AGMX OPORTUNIDA": "AGMX",
+  "E S L KOSLYK CO": "E S L KOSLYK",
+  "KMAN MOVEIS": "KMAN",
+  "LOGME - TRANSPO": "LOGME",
+  "LOGME CWB": "LOGME",
+  "ORC MOVEIS E EL": "ORC",
+  "MOVEL SERVICE COMERCIO DE MOVEIS LTDA": "MOVEL SERVICE",
+  "MOV CAMILO": "MOVEIS CAMILO",
+  "MOVEIS CAMILO L": "MOVEIS CAMILO",
+  "CAMILO": "MOVEIS CAMILO",
+  "PONTASSO - TRINDADE & CUBA": "TRINDADE & CUBA",
+  "TRINDADE": "TRINDADE & CUBA",
+  "SALDAO CAMPINAS": "SALDAO",
+  "REAL MOWEIS COM": "REAL MOWEIS",
+  "TOPA TUDO MOVEI": "TOPA TUDO",
+  "TOPA TUDO MOVEIS": "TOPA TUDO",
+};
+
+// Ponto único de normalização — sempre usar essa função ao ler/agrupar nome de parceiro
+function normalizarParceiro(nomeOriginal) {
+  const limpo = limparNomeParceiro(nomeOriginal);
+  if (!limpo) return "";
+  if (PARCEIRO_ALIASES[limpo]) return PARCEIRO_ALIASES[limpo];
+  const semSufixo = removerSufixosGenericos(limpo);
+  if (semSufixo !== limpo && PARCEIRO_ALIASES[semSufixo]) return PARCEIRO_ALIASES[semSufixo];
+  return semSufixo || limpo;
+}
+
+// Mescla dois registros semanais (usado quando dois nomes diferentes de parceiro
+// caem no mesmo nome canônico e ambos têm dados na mesma semana) — pondera pelo total
+function mesclarRegistroSemana(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const totA = a.total||0, totB = b.total||0, tot = totA+totB;
+  const pw = k => {
+    const va=a[k], vb=b[k];
+    if (va==null && vb==null) return null;
+    if (va==null) return vb;
+    if (vb==null) return va;
+    return tot ? Math.round((va*totA+vb*totB)/tot*100)/100 : null;
+  };
+  return { total: tot, sla:pw("sla"), agend:pw("agend"), ader:pw("ader"), sla15:pw("sla15"), aging:pw("aging") };
+}
+
 // Calcula semana ISO (igual ao AbrangenciaApp)
 function semanaISO(dateStr) {
   if (!dateStr) return null;
@@ -250,6 +331,8 @@ export default function WeeklyApp() {
       let rows = [];
       if(csvSalvo?.rows) rows = csvSalvo.rows;
       else if(typeof csvSalvo==="string") rows = Papa.parse(csvSalvo,{header:true,skipEmptyLines:true}).data;
+      // Normaliza o nome do parceiro (Transportadora) para evitar duplicidade no filtro
+      rows = rows.map(r => r["Transportadora"] ? {...r, "Transportadora": normalizarParceiro(r["Transportadora"])} : r);
       setRawRows(rows);
 
       // semMes: mapa semana → Set de meses (uma semana pode cobrir 2 meses)
@@ -268,7 +351,18 @@ export default function WeeklyApp() {
         meses: semMesSet[w.s]?[...semMesSet[w.s]]:[]
       }));
       setWeekly(wEnriq.sort((a,b)=>a.s-b.s));
-      setPd(pdRaw);
+      // Canonicaliza as chaves de pd (nome do parceiro), mesclando semanas quando dois nomes
+      // diferentes na base caírem no mesmo nome canônico
+      const pdCanon = {};
+      Object.entries(pdRaw).forEach(([nomeOriginal, semanasObj]) => {
+        const canon = normalizarParceiro(nomeOriginal);
+        if (!canon) return;
+        if (!pdCanon[canon]) pdCanon[canon] = {};
+        Object.entries(semanasObj||{}).forEach(([semana, rec]) => {
+          pdCanon[canon][semana] = mesclarRegistroSemana(pdCanon[canon][semana], rec);
+        });
+      });
+      setPd(pdCanon);
 
       if(wEnriq.length){
         setSelA(wEnriq[wEnriq.length-1].s);
@@ -371,8 +465,17 @@ export default function WeeklyApp() {
       Object.values(csatPP).forEach(pp=>{
         pp.semanas = pp.semanas.map(s=>({...s, mes: s.mes || semMes[s.semana] || null}));
       });
+      // Canonicaliza o nome do parceiro (evita duplicidade no filtro), mesclando as semanas
+      // de nomes diferentes que caem no mesmo canônico
+      const csatPPCanon = {};
+      Object.entries(csatPP).forEach(([nomeOriginal, dados]) => {
+        const canon = normalizarParceiro(nomeOriginal);
+        if (!canon) return;
+        if (!csatPPCanon[canon]) csatPPCanon[canon] = {semanas: []};
+        csatPPCanon[canon].semanas.push(...(dados.semanas||[]));
+      });
       setCsatSlots(csatSlimEnriq);
-      setCsatPorParceiro(csatPP);
+      setCsatPorParceiro(csatPPCanon);
 
       // Abrangência — usa rows do IDB diretamente (mes já é número, confirmado)
       const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
@@ -389,8 +492,11 @@ export default function WeeklyApp() {
       // Coleta x Recebimento (atual e anterior)
       const cr = await lerIDB("slaParcaDB","csvBruto","coletaRecebimento");
       const crAnt = await lerIDB("slaParcaDB","csvBruto","coletaRecebimentoAnterior");
-      setCrRows(cr?.rows||[]);
-      setCrRowsAnt(crAnt?.rows||[]);
+      const normalizarLinhasCR = (linhas) => (linhas||[]).map(r =>
+        r["Parceiro Nome"] ? {...r, "Parceiro Nome": normalizarParceiro(r["Parceiro Nome"])} : r
+      );
+      setCrRows(normalizarLinhasCR(cr?.rows));
+      setCrRowsAnt(normalizarLinhasCR(crAnt?.rows));
 
       setLoading(false);
     })();
