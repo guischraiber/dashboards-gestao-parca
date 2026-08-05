@@ -330,7 +330,7 @@ export default function WeeklyApp() {
       // atualiza a cópia local antes de ler — assim quem só visualiza não precisa importar.
       await sincronizarAntesDeLer([
         "slaCsvAtual","slaCr","slaCrAnterior","slaWeekly","slaPd",
-        "csatParsed","csatSemanasTrav","abrangAtual","abrangAnterior",
+        "csatParsed","csatDadosImportados","csatSemanasTrav","abrangAtual","abrangAnterior",
       ]);
 
       const wRaw = lerLS("slaParca_weekly",[]);
