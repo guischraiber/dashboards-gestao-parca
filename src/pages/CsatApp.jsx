@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import Papa from "papaparse";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
-import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 
 const C = {
   laranja: "#F97316", laranjaLight: "#FED7AA",
@@ -56,66 +55,13 @@ function salvarSemanasTravadas(travadas) {
 
 function chaveWeek(ano, semana) { return `${ano}_W${semana}`; }
 
-// ── IndexedDB — CSVs importados (respostas + disparos) ─────────────────────
-// Guarda os dados brutos importados para que, ao reabrir o dashboard ou trocar
-// de aba, os resultados continuem aparecendo sem precisar reimportar os arquivos.
-// Usa IndexedDB (em vez de localStorage) porque a base de Respostas costuma
-// vir com texto livre nos comentários e pode passar fácil dos ~5MB que o
-// localStorage aguenta — o que fazia a persistência falhar silenciosamente.
-const CSAT_DB_NAME = "csatParcaDB";
-const CSAT_STORE = "dadosImportados";
-
-function abrirCsatDB() {
-  return new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) { reject(new Error("IndexedDB indisponível neste navegador")); return; }
-    const req = indexedDB.open(CSAT_DB_NAME, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(CSAT_STORE); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function carregarDadosImportados() {
-  try {
-    const db = await abrirCsatDB();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(CSAT_STORE, "readonly");
-      const req = tx.objectStore(CSAT_STORE).get("atual");
-      req.onsuccess = () => resolve(req.result || null); // { respostas, disparos, arquivosInfo }
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function salvarDadosImportados(respostas, disparos, arquivosInfo) {
-  try {
-    const db = await abrirCsatDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(CSAT_STORE, "readwrite");
-      tx.objectStore(CSAT_STORE).put({ respostas, disparos, arquivosInfo }, "atual");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return true;
-  } catch (e) {
-    console.warn("Não foi possível salvar os dados importados localmente:", e);
-    return false;
-  }
-}
-
-async function limparDadosImportados() {
-  try {
-    const db = await abrirCsatDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(CSAT_STORE, "readwrite");
-      tx.objectStore(CSAT_STORE).delete("atual");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
-}
+// ── Persistência dos CSVs importados (respostas + disparos) ────────────────
+// Antes ficava em IndexedDB local (por navegador). Agora vem do backend
+// (api/csat.js / api/importarCsat.js), no mesmo padrão do Score / SLA /
+// Coleta x Recebimento: um import feito por qualquer pessoa passa a valer
+// para todos os colaboradores, sem precisar reimportar por navegador. Usa a
+// variante "grande" (Git Data API/blobs) porque a base de Respostas costuma
+// vir com texto livre nos comentários e pode passar de ~1MB.
 
 // ── Parser principal ──────────────────────────────────────────────────────────
 function parseData(respostas, disparos, semanasTravadas = {}) {
@@ -198,7 +144,6 @@ function parseData(respostas, disparos, semanasTravadas = {}) {
     }
   });
   salvarSemanasTravadas(novasTravadas);
-  publicarApósImportar("csatSemanasTrav", novasTravadas);
 
   // Unir semanas travadas + semanas novas ainda não travadas
   const todasSemanas = [...new Set([
@@ -340,18 +285,6 @@ function ComentariosList({ items, cor, max = 200 }) {
   );
 }
 
-// ── Upload Zone ───────────────────────────────────────────────────────────────
-function UploadZone({ label, icon, loaded, onFile }) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "24px", border: `2px dashed ${loaded ? C.verde : C.cinzaBorda}`, borderRadius: 12, cursor: "pointer", background: loaded ? C.verdeLight + "44" : C.cinzaCard }}>
-      <span style={{ fontSize: 28 }}>{loaded ? "✅" : icon}</span>
-      <span style={{ fontSize: 13, fontWeight: 600, color: loaded ? C.verde : C.texto }}>{loaded ? "Carregado ✓" : label}</span>
-      <span style={{ fontSize: 11, color: C.cinzaTexto }}>{loaded ? "Clique para trocar" : "Clique ou arraste o CSV"}</span>
-      <input type="file" accept=".csv" onChange={onFile} style={{ display: "none" }} />
-    </label>
-  );
-}
-
 // ── App ───────────────────────────────────────────────────────────────────────
 // ── Encode/decode com compressão ────────────────────────────────────────────
 function bytesParaBinaryString(bytes) {
@@ -405,6 +338,17 @@ async function copiarLinkMascarado(url, label) {
   }
 }
 
+// Lê um File como texto puro (mesmo helper usado no ImportView do Score e no
+// SLA/Coleta x Recebimento).
+function lerArquivoComoTexto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file, "utf-8");
+  });
+}
+
 export default function CsatApp() {
   const [respostas, setRespostas] = useState(null);
   const [disparos, setDisparos] = useState(null);
@@ -423,24 +367,66 @@ export default function CsatApp() {
   });
   const [modoSelecao, setModoSelecao] = useState("unico"); // "unico" | "consolidar" | "comparar"
   const [periodosMulti, setPeriodosMulti] = useState([]); // períodos selecionados no modo multi
-  const [avisoPersistencia, setAvisoPersistencia] = useState(false);
+  const [enviandoCsat, setEnviandoCsat] = useState(false);
+  const [erroEnvioCsat, setErroEnvioCsat] = useState("");
+  const [historicoCsat, setHistoricoCsat] = useState([]);
   const [uploadHistory, setUploadHistory] = useState(() => {
     try { const s = localStorage.getItem("csat_upload_hist"); return s ? JSON.parse(s) : []; } catch { return []; }
   });
   const [travadas, setTravadas] = useState(() => carregarSemanasTravadas());
 
+  const respostasRef = useRef(null);
+  const disparosRef = useRef(null);
+  const respostasTextoRef = useRef(null);
+  const disparosTextoRef = useRef(null);
+
+  const calcular = useCallback((resp, disp) => {
+    if (resp && disp) {
+      const semanasTravadas = carregarSemanasTravadas();
+      const result = parseData(resp, disp, semanasTravadas);
+      setParsed(result);
+      setPeriodoSel(result.semanas[result.semanas.length - 1] || null);
+      setFromURL(false);
+      window.history.replaceState({}, "", window.location.pathname);
+      setTravadas(carregarSemanasTravadas());
+    }
+  }, []);
+
+  // Carrega as duas bases do backend (data/csatRespostas.csv e
+  // data/csatDisparos.csv no GitHub, servidas por api/csat.js) — importadas
+  // por qualquer colaborador, valem para todos, sem depender de IndexedDB local.
+  const recarregarCsatDoServidor = useCallback(async () => {
+    try {
+      const r = await fetch("/api/csat");
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data && data.respostasCSV && data.disparosCSV) {
+        const resp = Papa.parse(data.respostasCSV, { header: true, skipEmptyLines: true }).data;
+        const disp = Papa.parse(data.disparosCSV, { header: true, skipEmptyLines: true }).data;
+        setRespostas(resp);
+        setDisparos(disp);
+        respostasRef.current = resp;
+        disparosRef.current = disp;
+        respostasTextoRef.current = data.respostasCSV;
+        disparosTextoRef.current = data.disparosCSV;
+        setArquivosInfo({
+          respostas: { nome: data.nomeRespostas || "—", linhas: resp.length },
+          disparos: { nome: data.nomeDisparos || "—", linhas: disp.length },
+        });
+        calcular(resp, disp);
+      }
+      setHistoricoCsat(data?.historico || []);
+    } catch (e) {
+      console.warn("Não foi possível carregar o CSAT do servidor:", e);
+    }
+  }, [calcular]);
+
   // Carregar dados da URL ao montar
   useEffect(() => {
-    (async () => {
-      // Busca a versão mais recente do backend compartilhado antes de ler local —
-      // assim quem só visualiza (nunca importou nada) já vê os dados de quem importou.
-      await sincronizarAntesDeLer(["csatDadosImportados", "csatSemanasTrav"]);
-      setTravadas(carregarSemanasTravadas()); // relê após a sincronização acima
-
-      const params = new URLSearchParams(window.location.search);
-      const d = params.get("d");
-      if (d) {
-        const decoded = await decodeData(d);
+    const params = new URLSearchParams(window.location.search);
+    const d = params.get("d");
+    if (d) {
+      decodeData(d).then(decoded => {
         if (decoded) {
           // Restaurar estrutura completa com comentários vazios
           const restored = {
@@ -478,36 +464,34 @@ export default function CsatApp() {
             salvarSemanasTravadas(merged);
           }
         }
-        return;
-      }
+      });
+      return;
+    }
 
-      // Sem link na URL: tenta restaurar os últimos CSVs importados (respostas +
-      // disparos) que ficaram salvos no IndexedDB, igual ao que já acontece
-      // com o SLA e o Score.
-      const salvo = await carregarDadosImportados();
-      if (salvo && salvo.respostas && salvo.disparos) {
-        setRespostas(salvo.respostas);
-        setDisparos(salvo.disparos);
-        setArquivosInfo(salvo.arquivosInfo || { respostas: null, disparos: null });
-        respostasRef.current = salvo.respostas;
-        disparosRef.current = salvo.disparos;
-        calcular(salvo.respostas, salvo.disparos);
-      }
-    })();
-  }, []);
+    // Sem link na URL: carrega as bases mais recentes do servidor.
+    recarregarCsatDoServidor();
+  }, [recarregarCsatDoServidor]);
 
-  const respostasRef = useRef(null);
-  const disparosRef = useRef(null);
-
-  const calcular = useCallback((resp, disp) => {
-    if (resp && disp) {
-      const semanasTravadas = carregarSemanasTravadas();
-      const result = parseData(resp, disp, semanasTravadas);
-      setParsed(result);
-      setPeriodoSel(result.semanas[result.semanas.length - 1] || null);
-      setFromURL(false);
-      window.history.replaceState({}, "", window.location.pathname);
-      setTravadas(carregarSemanasTravadas());
+  // Envia as duas bases (texto CSV original) pro backend (api/importarCsat.js)
+  // assim que as duas estiverem carregadas — os dados passam a ficar salvos
+  // no repositório, visíveis pra qualquer pessoa que acessar o dashboard
+  // depois do próximo deploy (~1 minuto).
+  const enviarCsatParaServidor = useCallback(async (respostasTexto, disparosTexto, nomeRespostas, nomeDisparos) => {
+    setEnviandoCsat(true);
+    setErroEnvioCsat("");
+    try {
+      const r = await fetch("/api/importarCsat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ respostas: respostasTexto, disparos: disparosTexto, nomeRespostas, nomeDisparos }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+      setHistoricoCsat(prev => [...prev, { data: new Date().toISOString(), arquivo: `${nomeRespostas} + ${nomeDisparos}` }]);
+    } catch (e) {
+      setErroEnvioCsat(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
+    } finally {
+      setEnviandoCsat(false);
     }
   }, []);
 
@@ -515,20 +499,21 @@ export default function CsatApp() {
     const file = e.target.files[0];
     if (!file) return;
     const agora = new Date().toLocaleString("pt-BR");
-    Papa.parse(file, { header: true, skipEmptyLines: true, complete: ({ data }) => {
+    lerArquivoComoTexto(file).then(texto => {
+      const { data } = Papa.parse(texto, { header: true, skipEmptyLines: true });
       setter(data);
-      if (tipo === "respostas") respostasRef.current = data;
-      if (tipo === "disparos") disparosRef.current = data;
+      if (tipo === "respostas") { respostasRef.current = data; respostasTextoRef.current = texto; }
+      if (tipo === "disparos") { disparosRef.current = data; disparosTextoRef.current = texto; }
       setArquivosInfo(prev => {
         const novo = { ...prev, [tipo]: { nome: file.name, linhas: data.length, data: agora } };
         if (respostasRef.current && disparosRef.current) {
           calcular(respostasRef.current, disparosRef.current);
-          salvarDadosImportados(respostasRef.current, disparosRef.current, novo).then(ok => {
-            setAvisoPersistencia(!ok);
-          });
-          publicarApósImportar("csatDadosImportados", {
-            respostas: respostasRef.current, disparos: disparosRef.current, arquivosInfo: novo,
-          });
+          if (respostasTextoRef.current && disparosTextoRef.current) {
+            enviarCsatParaServidor(
+              respostasTextoRef.current, disparosTextoRef.current,
+              novo.respostas?.nome || "respostas.csv", novo.disparos?.nome || "disparos.csv"
+            );
+          }
         }
         return novo;
       });
@@ -538,8 +523,8 @@ export default function CsatApp() {
         try { localStorage.setItem("csat_upload_hist", JSON.stringify(updated)); } catch {}
         return updated;
       });
-    }});
-  }, [calcular]);
+    });
+  }, [calcular, enviarCsatParaServidor]);
 
   const onRespostas = loadCSV(setRespostas, "respostas");
   const onDisparos = loadCSV(setDisparos, "disparos");
@@ -811,24 +796,26 @@ export default function CsatApp() {
           )}
           {respostas && disparos && (
             <span style={{ fontSize: 11, color: C.verde, marginLeft: 4, fontWeight: 600 }}>
-              ✓ Prontos — clique em qualquer base para trocar
+              ✓ Salvo no servidor — clique em qualquer base para trocar
               <button onClick={() => {
-                if (window.confirm("Apagar os dados importados salvos? Você vai precisar subir os CSVs de novo na próxima vez que abrir o dashboard.")) {
-                  limparDadosImportados();
+                if (window.confirm("Isso só limpa a visualização local. As bases continuam salvas no servidor para todos — para removê-las de vez, importe CSVs vazios ou novos por cima.")) {
                   setRespostas(null);
                   setDisparos(null);
                   respostasRef.current = null;
                   disparosRef.current = null;
+                  respostasTextoRef.current = null;
+                  disparosTextoRef.current = null;
                   setArquivosInfo({ respostas: null, disparos: null });
                   setParsed(null);
                 }
-              }} style={{ marginLeft: 8, fontSize: 10, color: C.vermelho, background: "none", border: "none", cursor: "pointer", fontWeight: 700, padding: 0 }}>✕ limpar dados</button>
+              }} style={{ marginLeft: 8, fontSize: 10, color: C.vermelho, background: "none", border: "none", cursor: "pointer", fontWeight: 700, padding: 0 }}>✕ limpar visualização</button>
             </span>
           )}
-          {avisoPersistencia && (
-            <span style={{ fontSize: 11, color: C.amarelo, marginLeft: 4, fontWeight: 600 }}>
-              ⚠️ Não consegui salvar os dados neste navegador — na próxima vez que abrir, será preciso reimportar.
-            </span>
+          {enviandoCsat && (
+            <span style={{ fontSize: 11, color: C.laranja, marginLeft: 4, fontWeight: 600 }}>Enviando para o servidor...</span>
+          )}
+          {erroEnvioCsat && (
+            <span style={{ fontSize: 11, color: C.vermelho, marginLeft: 4, fontWeight: 600 }}>⚠️ {erroEnvioCsat}</span>
           )}
           {(!respostas || !disparos) && !parsed && (
             <span style={{ fontSize: 11, color: C.amarelo, marginLeft: 4 }}>⚠️ Suba os dois arquivos — o dashboard só calcula quando ambos estiverem carregados</span>
@@ -1528,36 +1515,88 @@ export default function CsatApp() {
                   </div>
                 )}
 
-                {/* Dados importados atualmente (IndexedDB) */}
+                {/* Dados importados atualmente — salvos no servidor */}
                 <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>📦 Dados Importados</div>
                     <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>
                       {respostas && disparos
-                        ? <>Respostas: <strong>{arquivosInfo.respostas?.nome || "—"}</strong> ({arquivosInfo.respostas?.linhas?.toLocaleString() || respostas.length} linhas) · Disparos: <strong>{arquivosInfo.disparos?.nome || "—"}</strong> ({arquivosInfo.disparos?.linhas?.toLocaleString() || disparos.length} linhas)</>
+                        ? <>Salvo no servidor — vale para todos os colaboradores. Respostas: <strong>{arquivosInfo.respostas?.nome || "—"}</strong> ({arquivosInfo.respostas?.linhas?.toLocaleString() || respostas.length} linhas) · Disparos: <strong>{arquivosInfo.disparos?.nome || "—"}</strong> ({arquivosInfo.disparos?.linhas?.toLocaleString() || disparos.length} linhas)</>
                         : "Nenhum CSV importado ainda."}
                     </div>
+                    {enviandoCsat && <div style={{ fontSize: 11, color: C.laranja, marginTop: 4, fontWeight: 600 }}>Enviando para o servidor...</div>}
+                    {erroEnvioCsat && <div style={{ fontSize: 11, color: C.vermelho, marginTop: 4, fontWeight: 600 }}>⚠️ {erroEnvioCsat}</div>}
                   </div>
                   {respostas && disparos && (
                     <button onClick={() => {
-                      if (!window.confirm("Apagar os dados importados salvos? Você vai precisar subir os CSVs de novo na próxima vez que abrir o dashboard.")) return;
-                      limparDadosImportados();
+                      if (!window.confirm("Isso só limpa a visualização local. As bases continuam salvas no servidor para todos — para removê-las de vez, importe CSVs vazios ou novos por cima.")) return;
                       setRespostas(null);
                       setDisparos(null);
                       respostasRef.current = null;
                       disparosRef.current = null;
+                      respostasTextoRef.current = null;
+                      disparosTextoRef.current = null;
                       setArquivosInfo({ respostas: null, disparos: null });
                       setParsed(null);
-                    }} style={{ fontSize: 11, color: C.vermelho, background: C.vermelhoLight, border: `1px solid ${C.vermelho}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 600 }}>🗑️ Limpar dados</button>
+                    }} style={{ fontSize: 11, color: C.cinzaTexto, background: C.cinzaFundo, border: `1px solid ${C.cinzaBorda}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>🗑️ Remover da visualização</button>
                   )}
                 </div>
 
-                {/* Histórico de uploads */}
+                {/* Histórico de importações — vem do backend, mesmo padrão do
+                    Score / SLA / Coleta x Recebimento. Limpar exige ADMIN_TOKEN. */}
                 <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, overflow: "hidden" }}>
                   <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.cinzaBorda}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>📂 Histórico de Uploads</div>
-                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>CSVs importados — salvo entre sessões.</div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>📜 Histórico de Importações</div>
+                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+                    </div>
+                    {historicoCsat.length > 0 && (
+                      <button onClick={async () => {
+                        const token = window.prompt("Digite o token de administrador para limpar o histórico:");
+                        if (!token) return;
+                        try {
+                          const r = await fetch("/api/limparHistoricoCsat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
+                          const data = await r.json();
+                          if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+                          setHistoricoCsat([]);
+                        } catch (e) {
+                          alert(`Não consegui limpar: ${e?.message || e}`);
+                        }
+                      }} style={{ fontSize: 11, color: C.cinzaTexto, background: C.cinzaFundo, border: `1px solid ${C.cinzaBorda}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>🗑️ Limpar histórico</button>
+                    )}
+                  </div>
+                  {historicoCsat.length === 0 ? (
+                    <div style={{ padding: 20, color: C.cinzaTexto, fontSize: 13, textAlign: "center" }}>Nenhuma importação registrada ainda.</div>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: C.cinzaFundo }}>
+                            {["#", "Arquivos", "Data / Hora"].map(h => (
+                              <th key={h} style={{ padding: "8px 14px", textAlign: h === "Arquivos" ? "left" : "center", fontSize: 11, fontWeight: 700, color: C.cinzaTexto, textTransform: "uppercase" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...historicoCsat].reverse().map((h, i) => (
+                            <tr key={i} style={{ borderTop: `1px solid ${C.cinzaBorda}` }}>
+                              <td style={{ padding: "8px 14px", textAlign: "center", color: C.cinzaTexto }}>{historicoCsat.length - i}</td>
+                              <td style={{ padding: "8px 14px", fontWeight: 600 }}>{h.arquivo || "—"}</td>
+                              <td style={{ padding: "8px 14px", textAlign: "center", color: C.cinzaTexto }}>{h.data ? new Date(h.data).toLocaleString("pt-BR") : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Histórico de uploads (local, informativo) */}
+                <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.cinzaBorda}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>📂 Histórico de Uploads (neste navegador)</div>
+                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>CSVs importados por aqui — só um registro local, não afeta os dados no servidor.</div>
                     </div>
                     {uploadHistory.length > 0 && (
                       <button onClick={() => {
