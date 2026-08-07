@@ -18,7 +18,16 @@
 //
 // Variáveis de ambiente necessárias (já configuradas no Vercel para o Score):
 //   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional), ADMIN_TOKEN
+//
+// ATENÇÃO: o Vercel limita o corpo de uma requisição de API Route a ~4.5MB.
+// Pra não esbarrar nisso quando a base de Respostas cresce (texto livre nos
+// comentários, muitas semanas acumuladas), o front-end manda as duas bases
+// comprimidas (CompressionStream "deflate" + base64) em `respostasGzip` /
+// `disparosGzip` — este endpoint descomprime com zlib.inflateSync antes de
+// gravar. `respostas`/`disparos` (texto puro) continuam aceitos por
+// compatibilidade.
 
+import zlib from 'zlib';
 import {
   lerArquivoGithubGrande, commitArquivoGrande,
   lerArquivoGithub, commitArquivo,
@@ -136,10 +145,20 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const body = req.body || {};
     if (body.admin !== undefined) return handleLimparHistorico(req, res, body.admin);
+    if (typeof body.respostasGzip === 'string' && typeof body.disparosGzip === 'string') {
+      let respostas, disparos;
+      try {
+        respostas = zlib.inflateSync(Buffer.from(body.respostasGzip, 'base64')).toString('utf8');
+        disparos = zlib.inflateSync(Buffer.from(body.disparosGzip, 'base64')).toString('utf8');
+      } catch (e) {
+        return res.status(400).json({ error: 'Não consegui descomprimir as bases recebidas.', detail: String(e.message || e) });
+      }
+      return handleImportar(req, res, respostas, disparos, body.nomeRespostas, body.nomeDisparos);
+    }
     if (typeof body.respostas === 'string' && typeof body.disparos === 'string') {
       return handleImportar(req, res, body.respostas, body.disparos, body.nomeRespostas, body.nomeDisparos);
     }
-    return res.status(400).json({ error: 'Requisição inválida — envie {respostas,disparos,...} para importar ou {admin} para limpar o histórico.' });
+    return res.status(400).json({ error: 'Requisição inválida — envie {respostasGzip,disparosGzip,...} (ou {respostas,disparos,...}) para importar, ou {admin} para limpar o histórico.' });
   }
 
   return res.status(405).json({ error: 'Método não suportado.' });
