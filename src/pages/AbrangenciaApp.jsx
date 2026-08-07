@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
 import MapaAbrangencia from "./MapaAbrangencia.jsx";
-import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 const COORD_CIDADES = {
   "CE|Fortaleza":[-3.7166,-38.5423],
   "RS|Santa Maria":[-29.6868,-53.8149],
@@ -1877,38 +1876,24 @@ const C = {
   cinzaTexto: "#6B7280", texto: "#1C1917",
 };
 
-// ── Persistência IndexedDB ────────────────────────────────────────────────────
-const DB_NAME = "abrangenciaParcaDB2";
-const STORE   = "dados";
-function abrirDB() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, 1);
-    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
-    r.onsuccess = () => res(r.result);
-    r.onerror   = () => rej(r.error);
+// ── Persistência dos CSVs importados (atual + anterior) ─────────────────────
+// Antes ficava em IndexedDB local (por navegador) — cada colaborador precisava
+// reimportar a planilha na própria máquina. Agora vem do backend (api/
+// abrangencia.js / api/importarAbrangencia.js), no mesmo padrão do Score / SLA
+// / CSAT: um import feito por qualquer pessoa passa a valer para todos os
+// colaboradores que acessam o dashboard, em ~1 minuto (tempo do redeploy
+// automático do Vercel) — sem precisar que cada um reimporte a mesma planilha.
+// A promoção atual → anterior (guardar a base anterior antes de sobrescrever)
+// agora acontece no servidor (api/importarAbrangencia.js), não mais aqui.
+
+// Lê um File como texto puro (mesmo helper usado no Score/SLA/CSAT).
+function lerArquivoComoTexto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file, "utf-8");
   });
-}
-async function salvarChave(chave, valor) {
-  try {
-    const db = await abrirDB();
-    await new Promise((res, rej) => {
-      const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(valor, chave);
-      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
-    });
-    return true;
-  } catch { return false; }
-}
-async function carregarChave(chave) {
-  try {
-    const db = await abrirDB();
-    return await new Promise((res, rej) => {
-      const tx = db.transaction(STORE, "readonly");
-      const req = tx.objectStore(STORE).get(chave);
-      req.onsuccess = () => res(req.result || null);
-      req.onerror   = () => rej(req.error);
-    });
-  } catch { return null; }
 }
 
 // ── Grade esquemática do Brasil ───────────────────────────────────────────────
@@ -2146,7 +2131,9 @@ export default function AbrangenciaApp() {
   const [anterior, setAnterior] = useState(null);
   const [loading,  setLoading]  = useState("");
   const [erro,     setErro]     = useState("");
-  const [avisoPersist, setAvisoPersist] = useState(false);
+  const [enviandoAbrangencia, setEnviandoAbrangencia] = useState(false);
+  const [erroEnvioAbrangencia, setErroEnvioAbrangencia] = useState("");
+  const [historicoAbrangencia, setHistoricoAbrangencia] = useState([]);
   const [thresholdPct, setThresholdPct] = useState(10);
   const [expandidosRetro, setExpandidosRetro] = useState(new Set());
 
@@ -2167,17 +2154,63 @@ export default function AbrangenciaApp() {
   // ── Evolução
   const [evolGranularidade, setEvolGranularidade] = useState("semana"); // semana | mes
 
-  useEffect(() => {
-    (async () => {
-      // Busca a versão mais recente do backend compartilhado antes de ler local —
-      // assim quem só visualiza (nunca importou nada) já vê os dados de quem importou.
-      await sincronizarAntesDeLer(["abrangAtual", "abrangAnterior"]);
-      const a = await carregarChave("atual");
-      const b = await carregarChave("anterior");
-      if (a) setAtual(a);
-      if (b) setAnterior(b);
-    })();
+  // Carrega as bases (atual + anterior) do backend (data/abrangenciaAtual.csv
+  // e data/abrangenciaAnterior.csv no GitHub, servidas por api/abrangencia.js)
+  // — importadas por qualquer colaborador, valem para todos, sem depender de
+  // IndexedDB local.
+  const recarregarAbrangenciaDoServidor = useCallback(async () => {
+    try {
+      const r = await fetch("/api/abrangencia");
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data && data.atualCSV) {
+        setAtual({
+          rows: parseCSVAbrangencia(data.atualCSV),
+          nome: data.atualNome,
+          data: data.atualData,
+          csvRaw: data.atualCSV,
+        });
+      }
+      if (data && data.anteriorCSV) {
+        setAnterior({
+          rows: parseCSVAbrangencia(data.anteriorCSV),
+          nome: data.anteriorNome,
+          data: data.anteriorData,
+          csvRaw: data.anteriorCSV,
+        });
+      }
+      setHistoricoAbrangencia(data?.historico || []);
+    } catch (e) {
+      console.warn("Não foi possível carregar a Abrangência do servidor:", e);
+    }
   }, []);
+
+  useEffect(() => {
+    recarregarAbrangenciaDoServidor();
+  }, [recarregarAbrangenciaDoServidor]);
+
+  // Envia o CSV (texto original) pro backend (api/importarAbrangencia.js) —
+  // os dados passam a ficar salvos no repositório, visíveis pra qualquer
+  // pessoa que acessar o dashboard depois do próximo deploy (~1 minuto). A
+  // promoção atual → anterior é feita pelo próprio endpoint.
+  const enviarAbrangenciaParaServidor = useCallback(async (csvTexto, nomeArquivo) => {
+    setEnviandoAbrangencia(true);
+    setErroEnvioAbrangencia("");
+    try {
+      const r = await fetch("/api/importarAbrangencia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: csvTexto, nome: nomeArquivo }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+      await recarregarAbrangenciaDoServidor();
+    } catch (e) {
+      setErroEnvioAbrangencia(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
+    } finally {
+      setEnviandoAbrangencia(false);
+    }
+  }, [recarregarAbrangenciaDoServidor]);
 
   const handleUpload = useCallback((file) => {
     setLoading(file.name); setErro("");
@@ -2187,22 +2220,17 @@ export default function AbrangenciaApp() {
         const rows = parseCSVAbrangencia(ev.target.result);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: VALIDAÇÃO, Logistica Reversa Transportadora, Logistica Reversa Estado, Logistica Reversa Cidade, Abrangencia.");
         const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:ev.target.result };
-        // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
-        // independente do estado React (que pode estar desatualizado dentro do closure).
-        const atualSalvo = await carregarChave("atual");
-        if (atualSalvo) {
-          await salvarChave("anterior", atualSalvo);
-          setAnterior(atualSalvo);
-          publicarApósImportar("abrangAnterior", atualSalvo);
-        }
-        const ok = await salvarChave("atual", novoAtual);
-        publicarApósImportar("abrangAtual", novoAtual);
-        setAtual(novoAtual); setAvisoPersist(!ok);
+        // Promoção local (só pra feedback imediato na tela, antes do servidor
+        // responder) — o servidor faz a promoção "de verdade" em
+        // api/importarAbrangencia.js ao salvar o novo arquivo.
+        if (atual) setAnterior(atual);
+        setAtual(novoAtual);
+        enviarAbrangenciaParaServidor(ev.target.result, file.name);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
     };
     reader.onerror = () => { setErro("Erro ao ler o arquivo."); setLoading(""); };
     reader.readAsText(file);
-  }, []);
+  }, [atual, enviarAbrangenciaParaServidor]);
 
   const baixarUltimaImportada = useCallback(() => {
     if (!atual) return;
@@ -2408,13 +2436,67 @@ export default function AbrangenciaApp() {
           </label>
         </div>
       </div>
-      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:14 }}>
+      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:6 }}>
         O modelo pra download é a própria base de logística reversa (mesmo formato de sempre) — baixe, atualize com a abrangência do ano inteiro e reimporte.
+      </div>
+      {enviandoAbrangencia && (
+        <div style={{ fontSize:12, color:C.laranja, fontWeight:600, marginBottom:8 }}>Enviando para o servidor...</div>
+      )}
+      {erroEnvioAbrangencia && (
+        <div style={{ fontSize:12, color:C.vermelho, fontWeight:600, marginBottom:8 }}>⚠️ {erroEnvioAbrangencia}</div>
+      )}
+
+      {/* Histórico de importações — vem do backend, data/historicoAbrangencia.json,
+          mesmo padrão do Score / SLA / CSAT. Limpar exige ADMIN_TOKEN. */}
+      <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, overflow:"hidden", marginBottom:16 }}>
+        <div style={{ padding:"14px 20px", borderBottom:`1px solid ${C.cinzaBorda}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:14 }}>📜 Histórico de Importações</div>
+            <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:2 }}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+          </div>
+          {historicoAbrangencia.length > 0 && (
+            <button onClick={async () => {
+              const token = window.prompt("Digite o token de administrador para limpar o histórico:");
+              if (!token) return;
+              try {
+                const r = await fetch("/api/limparHistoricoAbrangencia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+                setHistoricoAbrangencia([]);
+              } catch (e) {
+                alert(`Não consegui limpar: ${e?.message || e}`);
+              }
+            }} style={{ fontSize:11, color:C.cinzaTexto, background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:6, padding:"4px 12px", cursor:"pointer" }}>🗑️ Limpar histórico</button>
+          )}
+        </div>
+        {historicoAbrangencia.length === 0 ? (
+          <div style={{ padding:20, color:C.cinzaTexto, fontSize:13, textAlign:"center" }}>Nenhuma importação registrada ainda.</div>
+        ) : (
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+              <thead>
+                <tr style={{ background:C.cinzaFundo }}>
+                  {["#", "Arquivo", "Data / Hora"].map(h => (
+                    <th key={h} style={{ padding:"8px 14px", textAlign: h==="Arquivo"?"left":"center", fontSize:11, fontWeight:700, color:C.cinzaTexto, textTransform:"uppercase" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...historicoAbrangencia].reverse().map((h, i) => (
+                  <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                    <td style={{ padding:"8px 14px", textAlign:"center", color:C.cinzaTexto }}>{historicoAbrangencia.length - i}</td>
+                    <td style={{ padding:"8px 14px", fontWeight:600 }}>{h.arquivo || "—"}</td>
+                    <td style={{ padding:"8px 14px", textAlign:"center", color:C.cinzaTexto }}>{h.data ? new Date(h.data).toLocaleString("pt-BR") : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {loading && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Processando {loading}...</div>}
       {erro && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erro}</div>}
-      {avisoPersist && <div style={{ padding:10, background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, color:"#92400E", fontSize:12, marginBottom:12 }}>⚠️ Não consegui salvar neste navegador — será preciso reimportar ao recarregar a página.</div>}
 
       {!atual ? (
         <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
