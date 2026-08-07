@@ -52,8 +52,9 @@ const sem = (v, meta, inv) => {
 // Semana (weeklyExtra/pdExtra).
 //
 // Nem o CSV bruto principal nem o de "Coleta x Recebimento" usam mais
-// IndexedDB local — os dados de ambos agora vêm do backend (api/sla.js +
-// api/importarSla.js, e api/coletaRecebimento.js + api/importarColetaRecebimento.js,
+// IndexedDB local — os dados de ambos agora vêm do backend (um único
+// endpoint por base: GET lê, POST com {csv,nome} importa, POST com {admin}
+// limpa o histórico — api/sla.js e api/coletaRecebimento.js,
 // respectivamente), no mesmo padrão do Score: um import feito por qualquer
 // pessoa passa a valer para todos os colaboradores, sem precisar reimportar
 // por navegador. O CSV do SLA usa a variante "grande" desses endpoints (Git
@@ -816,7 +817,7 @@ const AbaFaturamentoColeta = ({
   const [enviando, setEnviando] = useState(false);
   const [resultadoImport, setResultadoImport] = useState(null);
 
-  // Envia a planilha para o backend (api/importarColetaRecebimento.js) — os
+  // Envia a planilha para o backend (api/coletaRecebimento.js (POST)) — os
   // dados passam a ficar salvos no repositório, visíveis para qualquer pessoa
   // que acessar o dashboard depois do próximo deploy (~1 minuto), e não mais
   // só no navegador de quem importou.
@@ -834,7 +835,7 @@ const AbaFaturamentoColeta = ({
       setNome(file.name);
       setLoading("");
       setEnviando(true);
-      const r = await fetch("/api/importarColetaRecebimento", {
+      const r = await fetch("/api/coletaRecebimento", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csv: texto, nome: file.name }),
@@ -1122,7 +1123,7 @@ export default function SlaApp() {
   const [fromURL,        setFromURL]        = useState(false);
   const [uploadHistory,  setUploadHistory]  = useState(()=>{ try{const s=localStorage.getItem("slaParca_hist"); return s?JSON.parse(s):[];}catch{return [];} });
   const [variacaoVol,    setVariacaoVol]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_var");  return s?JSON.parse(s):[];}catch{return [];} });
-  const [enviandoSla,     setEnviandoSla]     = useState(false); // enviando o CSV bruto pro backend (api/importarSla)
+  const [enviandoSla,     setEnviandoSla]     = useState(false); // enviando o CSV bruto pro backend (api/sla.js, POST)
   const [erroEnvioSla,    setErroEnvioSla]    = useState("");
   const [historicoSla,    setHistoricoSla]    = useState([]); // histórico de importações do CSV bruto (vem do backend)
 
@@ -1449,7 +1450,7 @@ export default function SlaApp() {
 
   // ── CSV Processing ─────────────────────────────────────────────────────────
   // Envia o CSV bruto (texto original, não as linhas já parseadas) pro backend
-  // (api/importarSla.js) — os dados passam a ficar salvos no repositório,
+  // (api/sla.js (POST)) — os dados passam a ficar salvos no repositório,
   // visíveis pra qualquer pessoa que acessar o dashboard depois do próximo
   // deploy (~1 minuto), e não mais só no navegador de quem importou. Roda em
   // paralelo ao processamento local (que já mostra o resultado na hora pra
@@ -1458,7 +1459,7 @@ export default function SlaApp() {
     setEnviandoSla(true);
     setErroEnvioSla("");
     try {
-      const r = await fetch("/api/importarSla", {
+      const r = await fetch("/api/sla", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csv: texto, nome: nomeArquivo }),
@@ -2326,7 +2327,7 @@ export default function SlaApp() {
               const token = window.prompt("Digite o token de administrador para limpar o histórico:");
               if(!token) return;
               try{
-                const r = await fetch("/api/limparHistoricoSla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
+                const r = await fetch("/api/sla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
                 const data = await r.json();
                 if(!r.ok) throw new Error(data.error||"Erro desconhecido");
                 setHistoricoSla([]);
@@ -2363,7 +2364,7 @@ export default function SlaApp() {
               const token = window.prompt("Digite o token de administrador para limpar o histórico:");
               if(!token) return;
               try{
-                const r = await fetch("/api/limparHistoricoColetaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
+                const r = await fetch("/api/coletaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
                 const data = await r.json();
                 if(!r.ok) throw new Error(data.error||"Erro desconhecido");
                 setHistoricoFat([]);
