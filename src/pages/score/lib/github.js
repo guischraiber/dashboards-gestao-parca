@@ -56,3 +56,114 @@ export function credenciaisGithub() {
   const branch = process.env.GITHUB_BRANCH || 'main';
   return { token, owner, repo, branch };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Versões "grandes" — usam a Git Data API (blobs + trees + commits) em vez
+// da Contents API simples acima. A Contents API tem um limite de ~1MB por
+// arquivo (tanto pra ler quanto pra escrever); a Git Data API não tem esse
+// limite prático (suporta blobs de até 100MB). Usadas pelos CSVs que podem
+// crescer bastante com o tempo (SLA bruto, CSAT, Abrangência) — os arquivos
+// pequenos (metadados, histórico) continuam usando commitArquivo/lerArquivoGithub
+// acima, sem necessidade de trocar.
+//
+// O preço de usar a Git Data API é mais chamadas por commit (5 requests em
+// vez de 1-2), mas o resultado final é idêntico: um commit normal no
+// repositório, que dispara o mesmo redeploy automático do Vercel.
+
+function headersGithub(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'score-parca-app',
+    'Content-Type': 'application/json',
+  };
+}
+
+async function jsonOuErro(resp, contexto) {
+  if (!resp.ok) {
+    const texto = await resp.text();
+    throw new Error(`${contexto} (status ${resp.status}): ${texto}`);
+  }
+  return resp.json();
+}
+
+export async function commitArquivoGrande({ owner, repo, branch, token, caminho, conteudo }) {
+  const base = `https://api.github.com/repos/${owner}/${repo}`;
+  const headers = headersGithub(token);
+
+  // 1. Ref do branch → sha do commit atual
+  const refResp = await fetch(`${base}/git/ref/heads/${branch}`, { headers });
+  const refData = await jsonOuErro(refResp, `Falha ao ler a ref de ${branch}`);
+  const commitShaAtual = refData.object.sha;
+
+  // 2. Commit atual → sha da tree base
+  const commitResp = await fetch(`${base}/git/commits/${commitShaAtual}`, { headers });
+  const commitData = await jsonOuErro(commitResp, 'Falha ao ler o commit atual');
+  const treeShaBase = commitData.tree.sha;
+
+  // 3. Cria o blob com o conteúdo novo
+  const blobResp = await fetch(`${base}/git/blobs`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ content: Buffer.from(conteudo, 'utf8').toString('base64'), encoding: 'base64' }),
+  });
+  const blobData = await jsonOuErro(blobResp, `Falha ao criar o blob de ${caminho}`);
+
+  // 4. Cria uma tree nova, baseada na atual, só trocando o arquivo em questão
+  const treeResp = await fetch(`${base}/git/trees`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      base_tree: treeShaBase,
+      tree: [{ path: caminho, mode: '100644', type: 'blob', sha: blobData.sha }],
+    }),
+  });
+  const treeData = await jsonOuErro(treeResp, `Falha ao criar a tree para ${caminho}`);
+
+  // 5. Cria o commit apontando pra tree nova
+  const novoCommitResp = await fetch(`${base}/git/commits`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      message: `Atualiza ${caminho} via dashboard`,
+      tree: treeData.sha,
+      parents: [commitShaAtual],
+    }),
+  });
+  const novoCommitData = await jsonOuErro(novoCommitResp, `Falha ao criar o commit de ${caminho}`);
+
+  // 6. Move o branch pra apontar pro commit novo
+  const updateRefResp = await fetch(`${base}/git/refs/heads/${branch}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ sha: novoCommitData.sha }),
+  });
+  await jsonOuErro(updateRefResp, `Falha ao atualizar o branch ${branch}`);
+}
+
+export async function lerArquivoGithubGrande({ owner, repo, branch, token, caminho }) {
+  const base = `https://api.github.com/repos/${owner}/${repo}`;
+  const headers = headersGithub(token);
+
+  // 1. Ref do branch → sha do commit atual
+  const refResp = await fetch(`${base}/git/ref/heads/${branch}`, { headers });
+  if (!refResp.ok) return null;
+  const refData = await refResp.json();
+
+  // 2. Commit atual → sha da tree raiz
+  const commitResp = await fetch(`${base}/git/commits/${refData.object.sha}`, { headers });
+  if (!commitResp.ok) return null;
+  const commitData = await commitResp.json();
+
+  // 3. Lista a tree inteira (recursiva) pra achar o sha do blob no caminho pedido
+  const treeResp = await fetch(`${base}/git/trees/${commitData.tree.sha}?recursive=1`, { headers });
+  if (!treeResp.ok) return null;
+  const treeData = await treeResp.json();
+  const entrada = (treeData.tree || []).find((e) => e.path === caminho);
+  if (!entrada) return null; // arquivo ainda não existe
+
+  // 4. Busca o conteúdo do blob direto (sem limite de ~1MB da Contents API)
+  const blobResp = await fetch(`${base}/git/blobs/${entrada.sha}`, { headers });
+  if (!blobResp.ok) return null;
+  const blobData = await blobResp.json();
+  return Buffer.from(blobData.content, 'base64').toString('utf8');
+}
