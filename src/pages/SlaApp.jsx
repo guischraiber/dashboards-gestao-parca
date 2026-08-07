@@ -949,9 +949,12 @@ const AbaFaturamentoColeta = ({
       <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:10}}>A planilha importada aqui fica salva no servidor — vale para todos os colaboradores que acessam o dashboard, sem precisar reimportar por navegador.</div>
 
       <div style={{display:"flex", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:16}}>
-        <label style={{cursor:"pointer", padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
-          <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])carregar(e.target.files[0]);e.target.value="";}}/>
-          📂 Importar planilha (Faturamentos Analítico)
+        {/* Desabilitado enquanto o envio anterior ainda está em andamento —
+            evita duas importações comprometendo o mesmo commit no GitHub ao
+            mesmo tempo (causa mais comum do "Update is not a fast forward"). */}
+        <label style={{cursor:enviando?"not-allowed":"pointer", opacity:enviando?0.6:1, padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
+          <input type="file" accept=".csv" disabled={enviando} style={{display:"none"}} onChange={e=>{if(e.target.files[0])carregar(e.target.files[0]);e.target.value="";}}/>
+          {enviando ? "⏳ Enviando..." : "📂 Importar planilha (Faturamentos Analítico)"}
         </label>
         {nome && <span style={{fontSize:12, color:C.cinzaTexto}}>Arquivo: <strong>{nome}</strong> ({rows.length} linhas)</span>}
         {nome && <button onClick={limparView}
@@ -1759,9 +1762,11 @@ export default function SlaApp() {
         <input type="checkbox" checked={forcarUltimaSemana} onChange={e=>setForcarUltimaSemana(e.target.checked)} />
         Processar semana em aberto
       </label>
-      <label style={{...pill(false),cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
-        <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
-        📂 Carregar CSV
+      {/* Desabilitado enquanto o envio anterior pro servidor ainda está em
+          andamento — mesmo motivo do Coleta x Recebimento acima. */}
+      <label style={{...pill(false),cursor:enviandoSla?"not-allowed":"pointer",opacity:enviandoSla?0.6:1,display:"flex",alignItems:"center",gap:5}}>
+        <input type="file" accept=".csv" disabled={enviandoSla} style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
+        {enviandoSla ? "⏳ Enviando..." : "📂 Carregar CSV"}
       </label>
       {weeklyExtra.length>0 && <button onClick={exportLinkSla} disabled={copiedLink==="loading"} style={{...pill(copiedLink==="done"),cursor:copiedLink==="loading"?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5}}>
         {copiedLink==="loading" ? "⏳ Gerando..." : copiedLink==="done" ? "✓ Link copiado!" : copiedLink==="manual" ? "📋 Copie o link abaixo" : "🔗 Compartilhar link"}
