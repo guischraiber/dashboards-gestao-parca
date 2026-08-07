@@ -521,7 +521,7 @@ export default function CsatApp() {
             : `Resposta inesperada do servidor (status ${r.status}).`
         );
       }
-      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
       setHistoricoCsat(prev => [...prev, { data: new Date().toISOString(), arquivo: `${nomeRespostas} + ${nomeDisparos}` }]);
     } catch (e) {
       setErroEnvioCsat(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
@@ -1592,7 +1592,7 @@ export default function CsatApp() {
                         try {
                           const r = await fetch("/api/csat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
                           const data = await r.json();
-                          if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+                          if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
                           setHistoricoCsat([]);
                         } catch (e) {
                           alert(`Não consegui limpar: ${e?.message || e}`);
