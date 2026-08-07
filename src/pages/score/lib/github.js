@@ -160,7 +160,13 @@ export async function commitArquivoGrande({ owner, repo, branch, token, caminho,
   // Repete o fluxo inteiro (não só o passo 6) se o conflito for de ref, já
   // que a tree/commit foram construídos em cima de uma base que já não é
   // mais a ponta do branch — precisa reler tudo do zero pra tentar de novo.
-  const MAX_TENTATIVAS = 3;
+  // 5 tentativas (em vez de 3) porque o CSAT e o Coleta x Recebimento fazem
+  // vários commits em sequência por importação (respostas+disparos+meta ou
+  // csv+meta+histórico) — se duas pessoas importarem coisas diferentes por
+  // perto uma da outra, a disputa pode se repetir mais de uma vez até
+  // acomodar. Cada tentativa extra soma ~0.4-2s de espera; ainda é bem menos
+  // que o tempo do restante da importação.
+  const MAX_TENTATIVAS = 5;
   for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
     try {
       await tentarCommitArquivoGrande({ base, headers, branch, caminho, conteudo });
