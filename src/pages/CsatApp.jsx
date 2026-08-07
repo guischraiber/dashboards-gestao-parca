@@ -295,6 +295,21 @@ function bytesParaBinaryString(bytes) {
   }
   return binary;
 }
+// Comprime um texto grande (CSV de Respostas/Disparos) antes de mandar pro
+// backend, pra não estourar o limite de ~4.5MB de corpo de requisição das
+// Serverless Functions do Vercel — a base de Respostas em especial costuma
+// ter texto livre nos comentários e crescer bastante com o tempo (29+
+// semanas acumuladas). Base64 padrão (não url-safe) porque vai num JSON, não
+// numa URL.
+async function comprimirTextoParaServidor(texto) {
+  const bytes = new TextEncoder().encode(texto);
+  const cs = new CompressionStream("deflate");
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const compressed = await new Response(cs.readable).arrayBuffer();
+  return btoa(bytesParaBinaryString(new Uint8Array(compressed)));
+}
 async function encodeData(data) {
   const json = JSON.stringify(data, (_, v) => (typeof v === "number" ? Math.round(v * 100) / 100 : v));
   const bytes = new TextEncoder().encode(json);
@@ -480,12 +495,32 @@ export default function CsatApp() {
     setEnviandoCsat(true);
     setErroEnvioCsat("");
     try {
+      // Manda as duas bases comprimidas (deflate + base64) em vez de texto
+      // puro — evita estourar o limite de ~4.5MB de corpo de requisição do
+      // Vercel conforme a base de Respostas acumula semanas.
+      const [respostasGzip, disparosGzip] = await Promise.all([
+        comprimirTextoParaServidor(respostasTexto),
+        comprimirTextoParaServidor(disparosTexto),
+      ]);
       const r = await fetch("/api/csat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ respostas: respostasTexto, disparos: disparosTexto, nomeRespostas, nomeDisparos }),
+        body: JSON.stringify({ respostasGzip, disparosGzip, nomeRespostas, nomeDisparos }),
       });
-      const data = await r.json();
+      let data;
+      try {
+        data = await r.json();
+      } catch {
+        // Corpo grande demais faz o Vercel cortar a requisição antes de
+        // chegar no handler e devolver texto puro (não JSON) — sem isso o
+        // .json() acima quebra com "Unexpected token...". Aqui pelo menos
+        // fica um aviso legível.
+        throw new Error(
+          r.status === 413
+            ? "Bases grandes demais para o servidor mesmo comprimidas (limite do Vercel). Continuam salvas só no seu navegador."
+            : `Resposta inesperada do servidor (status ${r.status}).`
+        );
+      }
       if (!r.ok) throw new Error(data.error || "Erro desconhecido");
       setHistoricoCsat(prev => [...prev, { data: new Date().toISOString(), arquivo: `${nomeRespostas} + ${nomeDisparos}` }]);
     } catch (e) {
