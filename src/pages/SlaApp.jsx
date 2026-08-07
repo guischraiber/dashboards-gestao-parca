@@ -1,7 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer, Cell, Legend } from "recharts";
 import Papa from "papaparse";
-import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
 
 // ── Cores ─────────────────────────────────────────────────────────────────────
 const C = {
@@ -45,11 +44,18 @@ const sem = (v, meta, inv) => {
 };
 
 // ── IndexedDB — CSV bruto importado ─────────────────────────────────────────
-// O CSV completo (rawRows) alimenta as visões de Mês/Trimestre/Ano. Antes ele
-// só existia em memória durante a sessão — ao recarregar a página, sumia, e
-// essas visões ficavam em branco (a de Semana continuava OK porque usa um
-// cache separado, já calculado). Guardamos aqui em IndexedDB (não localStorage,
+// O CSV completo (rawRows) alimenta as abas de detalhe (Cidades, Problemas,
+// Atrasos, Relatórios). Antes ele só existia em memória durante a sessão — ao
+// recarregar a página, sumia. Guardamos aqui em IndexedDB (não localStorage,
 // porque o CSV completo costuma passar dos ~5MB que o localStorage aguenta).
+//
+// Os INDICADORES agregados de Mês/Trimestre/Ano (KPIs, Painel, Evolução,
+// Histórico, Aging Elevado) NÃO dependem mais deste CSV bruto — eles usam um
+// cache separado (monthlyExtra/pdMonthlyExtra, em localStorage), calculado no
+// momento da importação, no mesmo padrão que já existia para a Semana
+// (weeklyExtra/pdExtra). Isso significa que uma limpeza do IndexedDB (ou o
+// problema de IndexedDB de 1 colaborador) não zera mais esses indicadores —
+// só as abas de detalhe por pedido continuam precisando do CSV bruto.
 const SLA_DB_NAME = "slaParcaDB";
 const SLA_STORE = "csvBruto";
 
@@ -615,7 +621,7 @@ const AbaRelatorios = ({rawRows,weeklyMerged,pdMerged,monthlyData,parceirosDisp,
   const pill2=(on,cor=C.laranja)=>({padding:"4px 12px",borderRadius:999,border:`1.5px solid ${on?cor:C.cinzaBorda}`,background:on?`${cor}18`:"transparent",cursor:"pointer",fontSize:12,fontWeight:600,color:on?cor:C.cinzaTexto});
   const sm2=(on,cor=C.laranja)=>({...pill2(on,cor),padding:"3px 8px",fontSize:11});
   const escCSV=v=>{const s=String(v??"");return s.includes(";")||s.includes('"')?`"${s.replace(/"/g,'""')}"`:s;};
-  const dlCSV=(rows2,nome)=>{const csv=rows2.map(r=>r.map(escCSV).join(";")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}));a.download=`${nome}_${new Date().toISOString().slice(0,10)}.csv`;a.click();};
+  const dlCSV=(rows2,nome)=>{const csv=rows2.map(r=>r.map(escCSV).join(";")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"}));a.download=`${nome}_${new Date().toISOString().slice(0,10)}.csv`;a.click();};
 
   const getAtrasos = (parceiros2) => {
     if(!rawRows.length) return [];
@@ -865,6 +871,7 @@ const AbaRelatorios = ({rawRows,weeklyMerged,pdMerged,monthlyData,parceirosDisp,
     </div>}
   </div>;
 };
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Componente AbaFaturamentoColeta — análise de Coleta x Recebimento
 // Lê a base "Faturamentos Analítico" (Parceiro Nome, Data Coleta, Data de
@@ -900,7 +907,6 @@ const AbaFaturamentoColeta = ({
         setNome(file.name);
         setLoading("");
         salvarFatRowsAtual(results.data, file.name).then(ok => setAvisoPersistencia(!ok));
-        publicarApósImportar("slaCr", { rows: results.data, nome: file.name });
       },
       error: (err) => {
         setErroUpload(`Não consegui processar este arquivo: ${err?.message || err}`);
@@ -1163,6 +1169,15 @@ export default function SlaApp() {
   const [rawRows,        setRawRows]        = useState([]);
   const [weeklyExtra,    setWeeklyExtra]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_weekly");return s?JSON.parse(s):[];}catch{return [];} });
   const [pdExtra,        setPdExtra]        = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd");    return s?JSON.parse(s):{};}catch{return {};} });
+  // Cache mensal (mesmo padrão da Semana) — calculado no momento da importação
+  // do CSV, guardado em localStorage. Alimenta as visões de Mês/Trimestre/Ano
+  // (KPIs, Painel por Parceiro, Evolução, Histórico, Aging Elevado) sem
+  // depender do CSV bruto no IndexedDB. As abas de detalhe por pedido
+  // (Cidades, Problemas, Atrasos, Relatórios, Coleta x Recebimento) continuam
+  // precisando do CSV bruto, porque mostram informação que não cabe num
+  // indicador agregado.
+  const [monthlyExtra,   setMonthlyExtra]   = useState(()=>{ try{const s=localStorage.getItem("slaParca_monthly"); return s?JSON.parse(s):[];}catch{return [];} });
+  const [pdMonthlyExtra, setPdMonthlyExtra] = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd_mensal");return s?JSON.parse(s):{};}catch{return {};} });
   const [copiedLink,     setCopiedLink]     = useState(false); // false | "loading" | "done" | "manual"
   const [linkGerado,     setLinkGerado]     = useState(null);
   const [linkAviso,      setLinkAviso]      = useState("");
@@ -1213,11 +1228,10 @@ export default function SlaApp() {
   const [compA,          setCompA]          = useState(null);
   const [compB,          setCompB]          = useState(null);
 
-  // Restaurar o CSV bruto salvo (necessário pras visões de Mês/Trimestre/Ano,
-  // que dependem dele — diferente da Semana, que usa o cache já calculado).
+  // Restaurar o CSV bruto salvo — necessário só pelas abas de detalhe (Cidades,
+  // Problemas, Atrasos, Relatórios). Mês/Trimestre/Ano não dependem mais disso.
   useEffect(() => {
     (async () => {
-      await sincronizarAntesDeLer(["slaCsvAtual"]); // traz a versão publicada por quem importou, se houver
       const salvo = await carregarRawRowsSalvo();
       if (salvo && salvo.rows && salvo.rows.length) {
         setRawRows(salvo.rows);
@@ -1231,23 +1245,11 @@ export default function SlaApp() {
   // já é feito para o CSV principal acima.
   useEffect(() => {
     (async () => {
-      await sincronizarAntesDeLer(["slaCr","slaCrAnterior"]);
       const salvo = await carregarFatRowsSalvo();
       if (salvo && salvo.rows && salvo.rows.length) {
         setFatRows(salvo.rows);
         setFatNome(salvo.nome || "");
       }
-    })();
-  }, []);
-
-  // Sincroniza os indicadores agregados por semana/parceiro (slaParca_weekly, slaParca_pd)
-  // com o backend remoto — necessário porque esses estados são lidos direto do localStorage
-  // no momento em que o componente monta (antes da sincronização terminar).
-  useEffect(() => {
-    (async () => {
-      await sincronizarAntesDeLer(["slaWeekly","slaPd"]);
-      try { const w = localStorage.getItem("slaParca_weekly"); if (w) setWeeklyExtra(JSON.parse(w)); } catch {}
-      try { const p = localStorage.getItem("slaParca_pd");     if (p) setPdExtra(JSON.parse(p));     } catch {}
     })();
   }, []);
 
@@ -1339,7 +1341,6 @@ export default function SlaApp() {
 
   // ── WEEKLY e PD merged ─────────────────────────────────────────────────────
   const WEEKLY_MERGED = useMemo(()=>{
-    const extraSet = new Set(weeklyExtra.map(w=>w.s));
     // sem hardcoded — tudo vem do CSV/localStorage
     return [...weeklyExtra].sort((a,b)=>a.s-b.s);
   },[weeklyExtra]);
@@ -1348,29 +1349,23 @@ export default function SlaApp() {
 
   const ALL_SEMANAS = useMemo(()=>WEEKLY_MERGED.map(w=>w.s),[WEEKLY_MERGED]);
 
-  const monthlyData = useMemo(()=>{
-    if(!rawRows.length) return [];
-    const map={};
-    rawRows.filter(r=>r["Flag Situacao Coleta"]==="Coletado").forEach(r=>{
-      const m=parseInt(r["Mês_Efetivada"]); if(!m||m<1||m>12) return;
-      if(!map[m]) map[m]={m,rows:[]};
-      map[m].rows.push(r);
-    });
-    return Object.values(map).map(({m,rows})=>{
-      const d=calcSemana(rows); return d?{m,...d}:null;
-    }).filter(Boolean).sort((a,b)=>a.m-b.m);
-  },[rawRows]);
+  // ── monthlyData ────────────────────────────────────────────────────────────
+  // Antes recalculava sempre a partir de rawRows (CSV bruto no IndexedDB) — se
+  // o IndexedDB fosse limpo, ficava em branco. Agora lê do cache mensal
+  // (monthlyExtra), populado no momento da importação, igual à Semana.
+  const monthlyData = useMemo(()=>[...monthlyExtra].sort((a,b)=>a.m-b.m),[monthlyExtra]);
 
   const ALL_MESES = useMemo(()=>monthlyData.map(d=>d.m),[monthlyData]);
 
   // ── PARCEIROS dinâmico ─────────────────────────────────────────────────────
   const PARCEIROS = useMemo(()=>{
     const doPD  = Object.keys(PD_MERGED);
+    const doPDMensal = Object.keys(pdMonthlyExtra);
     const doCSV = rawRows.length>0
       ? [...new Set(rawRows.filter(r=>r["Transportadora"]).map(r=>r["Transportadora"]).filter(Boolean))]
       : [];
-    return [...new Set([...doPD,...doCSV])].sort();
-  },[PD_MERGED,rawRows]);
+    return [...new Set([...doPD,...doPDMensal,...doCSV])].sort();
+  },[PD_MERGED,pdMonthlyExtra,rawRows]);
 
   // Auto-selecionar todos ao carregar
   useEffect(()=>{
@@ -1392,20 +1387,13 @@ export default function SlaApp() {
     return rows.filter(r=>String(r["Ano_Efetivada"]).trim()==="2026");
   },[granular,semanasSel,mesesSel,trimestresSel]);
 
-  // ── getRaw ─────────────────────────────────────────────────────────────────
-  // Cálculo por mês, independente do filtro geral (granular) — usado tanto
-  // quando o filtro está em "Mês" quanto internamente pelo "Trimestre" (que
-  // precisa somar 3 meses). Antes o Trimestre chamava getRaw recursivamente,
-  // que reolhava pro filtro geral (ainda "trim") e tratava o número do mês
-  // como se fosse outro trimestre — no T1 isso causava um loop infinito,
-  // porque o mês 1 também é uma chave válida de trimestre.
-  const getRawMes = useCallback((p,mes)=>{
-    const d=monthlyData.find(m=>m.m===mes);
-    if(!d) return null;
-    if(!rawRows.length) return null;
-    const rows=rawRows.filter(r=>r["Transportadora"]===p&&parseInt(r["Mês_Efetivada"])===mes&&r["Flag Situacao Coleta"]==="Coletado");
-    return rows.length>=3?calcSemana(rows):null;
-  },[monthlyData,rawRows]);
+  // ── getRawMes ──────────────────────────────────────────────────────────────
+  // Antes recalculava do CSV bruto (rawRows) a cada chamada — dependia dele
+  // estar presente. Agora lê direto do cache mensal por parceiro
+  // (pdMonthlyExtra), populado no import, no mesmo padrão do PD_MERGED da
+  // Semana. Trimestre e Ano (abaixo) continuam funcionando sem mudança, porque
+  // já dependiam só de getRawMes/monthlyData.
+  const getRawMes = useCallback((p,mes)=> pdMonthlyExtra[p]?.[mes] ?? null,[pdMonthlyExtra]);
 
   const getRaw = useCallback((p,periodo)=>{
     if(granular==="semana") return PD_MERGED[p]?.[periodo];
@@ -1505,7 +1493,6 @@ export default function SlaApp() {
         const rows=parseCSV(ev.target.result);
         setRawRows(rows);
         salvarRawRowsAtual(rows, file.name).then(ok => setAvisoPersistenciaCSV(!ok));
-        publicarApósImportar("slaCsvAtual", { rows, nome: file.name });
 
         // Semanas válidas do CSV
         const coletado=rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
@@ -1516,7 +1503,12 @@ export default function SlaApp() {
         // de fato fechada (sem nenhuma linha da semana posterior ainda).
         const semanasProc = forcar ? semanasRaw : semanasRaw.slice(0,-1);
 
-        if(!semanasProc.length){ setCsvStatus("ok"); return; }
+        // Meses válidos do CSV — diferente da Semana, não existe conceito de
+        // "mês em aberto" aqui (o dashboard já não tinha essa exclusão antes
+        // desta mudança), então processamos todos os meses com dado suficiente.
+        const mesesRaw=[...new Set(coletado.map(r=>parseInt(r["Mês_Efetivada"])).filter(n=>!isNaN(n)&&n>=1&&n<=12))].sort((a,b)=>a-b);
+
+        if(!semanasProc.length && !mesesRaw.length){ setCsvStatus("ok"); return; }
 
         // Parceiros do CSV (local, não do state)
         const parcsCSV=[...new Set(coletado.map(r=>r["Transportadora"]).filter(Boolean))].sort();
@@ -1539,7 +1531,23 @@ export default function SlaApp() {
             ...calculadas                                         // semanas do CSV atualizadas
           ].sort((a,b)=>a.s-b.s);
           try{localStorage.setItem("slaParca_weekly",JSON.stringify(merged));}catch{}
-          publicarApósImportar("slaWeekly", merged);
+          return merged;
+        });
+
+        // Calcular todos os meses (mesmo padrão da semana acima) — é isto que
+        // faz Mês/Trimestre/Ano sobreviverem sem o CSV bruto depois.
+        setMonthlyExtra(prev=>{
+          const calculadasM=[];
+          mesesRaw.forEach(m=>{
+            const rowsM=coletado.filter(r=>parseInt(r["Mês_Efetivada"])===m);
+            const d=calcSemana(rowsM); if(!d) return;
+            calculadasM.push({m,...d});
+          });
+          const merged=[
+            ...prev.filter(x=>!calculadasM.find(n=>n.m===x.m)),
+            ...calculadasM
+          ].sort((a,b)=>a.m-b.m);
+          try{localStorage.setItem("slaParca_monthly",JSON.stringify(merged));}catch{}
           return merged;
         });
 
@@ -1559,7 +1567,23 @@ export default function SlaApp() {
             });
           });
           try{localStorage.setItem("slaParca_pd",JSON.stringify(merged));}catch{}
-          publicarApósImportar("slaPd", merged);
+          return merged;
+        });
+
+        // Por parceiro e mês (mesmo padrão acima, cache mensal por parceiro)
+        setPdMonthlyExtra(prev=>{
+          const merged={...prev};
+          parcsCSV.forEach(p=>{
+            const rowsP=coletado.filter(r=>r["Transportadora"]===p);
+            mesesRaw.forEach(m=>{
+              const rowsPM=rowsP.filter(r=>parseInt(r["Mês_Efetivada"])===m);
+              if(rowsPM.length<3) return;
+              const d=calcSemana(rowsPM); if(!d) return;
+              if(!merged[p]) merged[p]={};
+              merged[p][m]=d;
+            });
+          });
+          try{localStorage.setItem("slaParca_pd_mensal",JSON.stringify(merged));}catch{}
           return merged;
         });
 
@@ -1605,7 +1629,7 @@ export default function SlaApp() {
 
         // Auto-selecionar última semana
         const ultimaSem=semanasProc[semanasProc.length-1];
-        setSemanasSel([ultimaSem]);
+        if(ultimaSem!=null) setSemanasSel([ultimaSem]);
         setParceiros(parcsCSV);
 
         setCsvStatus("ok");
@@ -1615,12 +1639,13 @@ export default function SlaApp() {
     reader.readAsText(file);
   };
 
+
   // ── Exportar CSV ───────────────────────────────────────────────────────────
   const escCSV=v=>{const s=String(v??"");return s.includes(";")||s.includes('"')?`"${s.replace(/"/g,'""')}"`:s;};
   const downloadCSV=(rows,nome)=>{
     const csv=rows.map(r=>r.map(escCSV).join(";")).join("\n");
     const a=document.createElement("a");
-    a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}));
+    a.href=URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"}));
     a.download=`${nome}_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
   };
@@ -2120,6 +2145,7 @@ export default function SlaApp() {
         )}
       </div>}
 
+
       {/* ══ ATRASOS ══ */}
       {abaGlobal==="atrasos"&&(rawRows.length===0
         ?<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:32,textAlign:"center",color:C.cinzaTexto}}>
@@ -2270,18 +2296,30 @@ export default function SlaApp() {
           <button onClick={()=>{if(!window.confirm("Limpar cache de semanas? Os dados serão recalculados no próximo upload.")) return;try{localStorage.removeItem("slaParca_weekly");localStorage.removeItem("slaParca_pd");}catch{}setWeeklyExtra([]);setPdExtra({});}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar cache</button>
         </div>}
 
-        {/* CSV bruto atual — usado pelas visões de Mês/Trimestre/Ano */}
+        {/* Cache de meses — mesmo padrão do cache de semanas acima. Alimenta as
+            visões de Mês/Trimestre/Ano (KPIs, Painel, Evolução, Histórico,
+            Aging Elevado) sem depender do CSV bruto. */}
+        {monthlyExtra.length>0&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14}}>💾 Cache de Meses</div>
+            <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Meses salvos: <strong>{monthlyExtra.map(m=>MESES_NOME[m.m]).join(", ")}</strong> — usado pelas visões de Mês/Trimestre/Ano</div>
+          </div>
+          <button onClick={()=>{if(!window.confirm("Limpar cache de meses? Os indicadores de Mês/Trimestre/Ano ficam em branco até o próximo upload.")) return;try{localStorage.removeItem("slaParca_monthly");localStorage.removeItem("slaParca_pd_mensal");}catch{}setMonthlyExtra([]);setPdMonthlyExtra({});}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar cache</button>
+        </div>}
+
+        {/* CSV bruto atual — usado só pelas abas de detalhe por pedido (Cidades,
+            Problemas, Atrasos, Relatórios). Mês/Trimestre/Ano usam o cache acima. */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontWeight:700,fontSize:14}}>🗄️ CSV Bruto Atual</div>
             <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>
               {rawRows.length>0
-                ? <>Usado nas visões de Mês/Trimestre/Ano: <strong>{csvNome||"—"}</strong> ({rawRows.length.toLocaleString()} linhas)</>
-                : "Nenhum CSV salvo ainda — Mês/Trimestre/Ano ficam em branco até você importar um."}
+                ? <>Usado nas abas Cidades, Problemas, Atrasos e Relatórios: <strong>{csvNome||"—"}</strong> ({rawRows.length.toLocaleString()} linhas)</>
+                : "Nenhum CSV salvo ainda — necessário só para as abas Cidades, Problemas, Atrasos e Relatórios. Os indicadores de Mês/Trimestre/Ano (Visão Geral, Painel, Evolução, Aging Elevado) já ficam salvos em cache acima e continuam funcionando mesmo sem este CSV."}
             </div>
             {avisoPersistenciaCSV&&<div style={{fontSize:11,color:C.amarelo,marginTop:4,fontWeight:600}}>⚠️ Não consegui salvar neste navegador — ao recarregar a página, será preciso reimportar.</div>}
           </div>
-          {rawRows.length>0&&<button onClick={()=>{if(!window.confirm("Apagar o CSV bruto salvo? Semana continua funcionando (usa o cache separado), mas Mês/Trimestre/Ano ficam em branco até você reimportar.")) return;limparRawRowsSalvo();setRawRows([]);setCsvNome("");setCsvStatus("idle");}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar</button>}
+          {rawRows.length>0&&<button onClick={()=>{if(!window.confirm("Apagar o CSV bruto salvo? Semana e os indicadores de Mês/Trimestre/Ano continuam funcionando (usam cache separado). Só as abas Cidades, Problemas, Atrasos e Relatórios ficam em branco até você reimportar.")) return;limparRawRowsSalvo();setRawRows([]);setCsvNome("");setCsvStatus("idle");}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar</button>}
         </div>
 
         {/* Variações de volume */}
