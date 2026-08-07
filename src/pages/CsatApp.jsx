@@ -820,10 +820,14 @@ export default function CsatApp() {
             { label: "Respostas", loaded: !!respostas, onFile: onRespostas },
             { label: "Disparos", loaded: !!disparos, onFile: onDisparos },
           ].map((item, i) => (
-            <label key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, cursor: "pointer", border: `1px solid ${item.loaded ? C.verde : C.cinzaBorda}`, background: item.loaded ? C.verdeLight + "55" : C.cinzaFundo }}>
+            // Desabilitado enquanto o envio anterior pro servidor ainda está
+            // em andamento — evita duas importações disputando o mesmo
+            // commit no GitHub ao mesmo tempo (causa mais comum do "Update
+            // is not a fast forward").
+            <label key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 20, cursor: enviandoCsat ? "not-allowed" : "pointer", opacity: enviandoCsat ? 0.6 : 1, border: `1px solid ${item.loaded ? C.verde : C.cinzaBorda}`, background: item.loaded ? C.verdeLight + "55" : C.cinzaFundo }}>
               <span style={{ fontSize: 13 }}>{item.loaded ? "✅" : "📂"}</span>
               <span style={{ fontSize: 12, fontWeight: 600, color: item.loaded ? C.verde : C.cinzaTexto }}>{item.label}{item.loaded ? " ✓" : ""}</span>
-              <input type="file" accept=".csv" onChange={item.onFile} style={{ display: "none" }} />
+              <input type="file" accept=".csv" disabled={enviandoCsat} onChange={item.onFile} style={{ display: "none" }} />
             </label>
           ))}
           {(!respostas || !disparos) && (
