@@ -57,7 +57,7 @@ function chaveWeek(ano, semana) { return `${ano}_W${semana}`; }
 
 // ── Persistência dos CSVs importados (respostas + disparos) ────────────────
 // Antes ficava em IndexedDB local (por navegador). Agora vem do backend
-// (api/csat.js / api/importarCsat.js), no mesmo padrão do Score / SLA /
+// (api/csat.js / api/csat.js (POST)), no mesmo padrão do Score / SLA /
 // Coleta x Recebimento: um import feito por qualquer pessoa passa a valer
 // para todos os colaboradores, sem precisar reimportar por navegador. Usa a
 // variante "grande" (Git Data API/blobs) porque a base de Respostas costuma
@@ -472,7 +472,7 @@ export default function CsatApp() {
     recarregarCsatDoServidor();
   }, [recarregarCsatDoServidor]);
 
-  // Envia as duas bases (texto CSV original) pro backend (api/importarCsat.js)
+  // Envia as duas bases (texto CSV original) pro backend (api/csat.js (POST))
   // assim que as duas estiverem carregadas — os dados passam a ficar salvos
   // no repositório, visíveis pra qualquer pessoa que acessar o dashboard
   // depois do próximo deploy (~1 minuto).
@@ -480,7 +480,7 @@ export default function CsatApp() {
     setEnviandoCsat(true);
     setErroEnvioCsat("");
     try {
-      const r = await fetch("/api/importarCsat", {
+      const r = await fetch("/api/csat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ respostas: respostasTexto, disparos: disparosTexto, nomeRespostas, nomeDisparos }),
@@ -1555,7 +1555,7 @@ export default function CsatApp() {
                         const token = window.prompt("Digite o token de administrador para limpar o histórico:");
                         if (!token) return;
                         try {
-                          const r = await fetch("/api/limparHistoricoCsat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
+                          const r = await fetch("/api/csat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
                           const data = await r.json();
                           if (!r.ok) throw new Error(data.error || "Erro desconhecido");
                           setHistoricoCsat([]);
