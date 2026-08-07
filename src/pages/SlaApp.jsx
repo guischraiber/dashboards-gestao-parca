@@ -835,12 +835,24 @@ const AbaFaturamentoColeta = ({
       setNome(file.name);
       setLoading("");
       setEnviando(true);
+      // Mesmo tratamento do envio do SLA: comprime antes de mandar, pra não
+      // esbarrar no limite de ~4.5MB de corpo de requisição do Vercel.
+      const csvGzip = await comprimirTextoParaServidor(texto);
       const r = await fetch("/api/coletaRecebimento", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv: texto, nome: file.name }),
+        body: JSON.stringify({ csvGzip, nome: file.name }),
       });
-      const data = await r.json();
+      let data;
+      try {
+        data = await r.json();
+      } catch {
+        throw new Error(
+          r.status === 413
+            ? "Arquivo grande demais para o servidor mesmo comprimido (limite do Vercel)."
+            : `Resposta inesperada do servidor (status ${r.status}).`
+        );
+      }
       if (!r.ok) throw new Error(data.error || "Erro desconhecido");
       setResultadoImport({ ok: true, mensagem: data.mensagem });
       // Atualiza o histórico de importações (Configurações) para refletir o
@@ -1055,6 +1067,20 @@ function bytesParaBinaryString(bytes) {
     binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
   }
   return binary;
+}
+// Comprime um texto grande (CSV bruto) antes de mandar pro backend, pra não
+// estourar o limite de ~4.5MB de corpo de requisição das Serverless Functions
+// do Vercel. Mesmo mecanismo (CompressionStream "deflate") já usado abaixo
+// pros links compartilháveis — aqui em base64 padrão (não url-safe), porque
+// vai dentro de um JSON, não de uma URL.
+async function comprimirTextoParaServidor(texto) {
+  const bytes = new TextEncoder().encode(texto);
+  const cs = new CompressionStream("deflate");
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const compressed = await new Response(cs.readable).arrayBuffer();
+  return btoa(bytesParaBinaryString(new Uint8Array(compressed)));
 }
 async function encodeDataSla(data) {
   const json = JSON.stringify(data, (_, v) => arredondarParaLink(v));
@@ -1459,12 +1485,31 @@ export default function SlaApp() {
     setEnviandoSla(true);
     setErroEnvioSla("");
     try {
+      // Manda comprimido (deflate + base64) em vez do texto puro — um CSV de
+      // milhares de linhas facilmente passa do limite de ~4.5MB de corpo de
+      // requisição do Vercel; comprimido, cabe tranquilo na grande maioria
+      // dos casos.
+      const csvGzip = await comprimirTextoParaServidor(texto);
       const r = await fetch("/api/sla", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv: texto, nome: nomeArquivo }),
+        body: JSON.stringify({ csvGzip, nome: nomeArquivo }),
       });
-      const data = await r.json();
+      let data;
+      try {
+        data = await r.json();
+      } catch {
+        // O Vercel corta a requisição antes de chegar no handler quando o
+        // corpo é grande demais e devolve texto puro (não JSON) — sem esse
+        // tratamento, o .json() acima quebra com uma mensagem confusa
+        // ("Unexpected token..."). Mesmo comprimido, um arquivo muito maior
+        // ainda pode estourar o limite; aqui pelo menos o aviso fica claro.
+        throw new Error(
+          r.status === 413
+            ? "Arquivo grande demais para o servidor mesmo comprimido (limite do Vercel). Continua salvo só no seu navegador."
+            : `Resposta inesperada do servidor (status ${r.status}).`
+        );
+      }
       if (!r.ok) throw new Error(data.error || "Erro desconhecido");
       setHistoricoSla(prev => [...prev, { data: new Date().toISOString(), arquivo: nomeArquivo }]);
     } catch (e) {
