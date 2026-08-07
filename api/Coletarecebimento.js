@@ -17,9 +17,16 @@
 //
 // Variáveis de ambiente necessárias (já configuradas no Vercel para o Score):
 //   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional), ADMIN_TOKEN
+//
+// ATENÇÃO: o Vercel limita o corpo de uma requisição de API Route a ~4.5MB.
+// Pra não esbarrar nisso com planilhas grandes, o front-end manda o CSV
+// comprimido (CompressionStream "deflate" + base64) no campo `csvGzip` — este
+// endpoint descomprime com zlib.inflateSync antes de gravar. `csv` (texto
+// puro) continua aceito por compatibilidade.
 
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import { commitArquivo, lerArquivoGithub, credenciaisGithub } from '../src/pages/score/lib/github.js';
 
 const ARQUIVO_CSV = 'data/coletaRecebimento.csv';
@@ -134,8 +141,17 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const body = req.body || {};
     if (body.admin !== undefined) return handleLimparHistorico(req, res, body.admin);
+    if (typeof body.csvGzip === 'string') {
+      let csv;
+      try {
+        csv = zlib.inflateSync(Buffer.from(body.csvGzip, 'base64')).toString('utf8');
+      } catch (e) {
+        return res.status(400).json({ error: 'Não consegui descomprimir o CSV recebido.', detail: String(e.message || e) });
+      }
+      return handleImportar(req, res, csv, body.nome);
+    }
     if (typeof body.csv === 'string') return handleImportar(req, res, body.csv, body.nome);
-    return res.status(400).json({ error: 'Requisição inválida — envie {csv,nome} para importar ou {admin} para limpar o histórico.' });
+    return res.status(400).json({ error: 'Requisição inválida — envie {csvGzip,nome} (ou {csv,nome}) para importar, ou {admin} para limpar o histórico.' });
   }
 
   return res.status(405).json({ error: 'Método não suportado.' });
