@@ -86,10 +86,14 @@ async function jsonOuErro(resp, contexto) {
   return resp.json();
 }
 
-export async function commitArquivoGrande({ owner, repo, branch, token, caminho, conteudo }) {
-  const base = `https://api.github.com/repos/${owner}/${repo}`;
-  const headers = headersGithub(token);
+function esperar(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
+// Faz uma tentativa completa do fluxo de 6 passos da Git Data API. Separado
+// de commitArquivoGrande() pra poder ser repetido em caso de conflito no
+// passo 6 (ver comentário abaixo).
+async function tentarCommitArquivoGrande({ base, headers, branch, caminho, conteudo }) {
   // 1. Ref do branch → sha do commit atual
   const refResp = await fetch(`${base}/git/ref/heads/${branch}`, { headers });
   const refData = await jsonOuErro(refResp, `Falha ao ler a ref de ${branch}`);
@@ -131,13 +135,44 @@ export async function commitArquivoGrande({ owner, repo, branch, token, caminho,
   });
   const novoCommitData = await jsonOuErro(novoCommitResp, `Falha ao criar o commit de ${caminho}`);
 
-  // 6. Move o branch pra apontar pro commit novo
+  // 6. Move o branch pra apontar pro commit novo. Se outra importação (ex.:
+  // a semana seguinte, disparada antes desta terminar) mover o branch entre
+  // os passos 1 e 6, o GitHub recusa este PATCH por não ser mais um
+  // fast-forward válido — é o gatilho mais comum do "Erro ao salvar no
+  // GitHub" quando duas importações se sobrepõem no tempo.
   const updateRefResp = await fetch(`${base}/git/refs/heads/${branch}`, {
     method: 'PATCH',
     headers,
     body: JSON.stringify({ sha: novoCommitData.sha }),
   });
-  await jsonOuErro(updateRefResp, `Falha ao atualizar o branch ${branch}`);
+  if (!updateRefResp.ok) {
+    const texto = await updateRefResp.text();
+    const err = new Error(`Falha ao atualizar o branch ${branch} (status ${updateRefResp.status}): ${texto}`);
+    err.conflitoDeRef = updateRefResp.status === 422 || updateRefResp.status === 409;
+    throw err;
+  }
+}
+
+export async function commitArquivoGrande({ owner, repo, branch, token, caminho, conteudo }) {
+  const base = `https://api.github.com/repos/${owner}/${repo}`;
+  const headers = headersGithub(token);
+
+  // Repete o fluxo inteiro (não só o passo 6) se o conflito for de ref, já
+  // que a tree/commit foram construídos em cima de uma base que já não é
+  // mais a ponta do branch — precisa reler tudo do zero pra tentar de novo.
+  const MAX_TENTATIVAS = 3;
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+    try {
+      await tentarCommitArquivoGrande({ base, headers, branch, caminho, conteudo });
+      return;
+    } catch (e) {
+      const ultimaTentativa = tentativa === MAX_TENTATIVAS;
+      if (!e.conflitoDeRef || ultimaTentativa) throw e;
+      // Espera um pouco (com variação) antes de tentar de novo, pra dar
+      // tempo da outra importação concorrente terminar.
+      await esperar(400 * tentativa + Math.random() * 400);
+    }
+  }
 }
 
 export async function lerArquivoGithubGrande({ owner, repo, branch, token, caminho }) {
