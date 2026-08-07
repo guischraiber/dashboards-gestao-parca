@@ -1879,12 +1879,12 @@ const C = {
 // ── Persistência dos CSVs importados (atual + anterior) ─────────────────────
 // Antes ficava em IndexedDB local (por navegador) — cada colaborador precisava
 // reimportar a planilha na própria máquina. Agora vem do backend (api/
-// abrangencia.js / api/importarAbrangencia.js), no mesmo padrão do Score / SLA
+// abrangencia.js / api/abrangencia.js (POST)), no mesmo padrão do Score / SLA
 // / CSAT: um import feito por qualquer pessoa passa a valer para todos os
 // colaboradores que acessam o dashboard, em ~1 minuto (tempo do redeploy
 // automático do Vercel) — sem precisar que cada um reimporte a mesma planilha.
 // A promoção atual → anterior (guardar a base anterior antes de sobrescrever)
-// agora acontece no servidor (api/importarAbrangencia.js), não mais aqui.
+// agora acontece no servidor (api/abrangencia.js (POST)), não mais aqui.
 
 // Lê um File como texto puro (mesmo helper usado no Score/SLA/CSAT).
 function lerArquivoComoTexto(file) {
@@ -2189,7 +2189,7 @@ export default function AbrangenciaApp() {
     recarregarAbrangenciaDoServidor();
   }, [recarregarAbrangenciaDoServidor]);
 
-  // Envia o CSV (texto original) pro backend (api/importarAbrangencia.js) —
+  // Envia o CSV (texto original) pro backend (api/abrangencia.js (POST)) —
   // os dados passam a ficar salvos no repositório, visíveis pra qualquer
   // pessoa que acessar o dashboard depois do próximo deploy (~1 minuto). A
   // promoção atual → anterior é feita pelo próprio endpoint.
@@ -2197,7 +2197,7 @@ export default function AbrangenciaApp() {
     setEnviandoAbrangencia(true);
     setErroEnvioAbrangencia("");
     try {
-      const r = await fetch("/api/importarAbrangencia", {
+      const r = await fetch("/api/abrangencia", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csv: csvTexto, nome: nomeArquivo }),
@@ -2222,7 +2222,7 @@ export default function AbrangenciaApp() {
         const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:ev.target.result };
         // Promoção local (só pra feedback imediato na tela, antes do servidor
         // responder) — o servidor faz a promoção "de verdade" em
-        // api/importarAbrangencia.js ao salvar o novo arquivo.
+        // api/abrangencia.js (POST) ao salvar o novo arquivo.
         if (atual) setAnterior(atual);
         setAtual(novoAtual);
         enviarAbrangenciaParaServidor(ev.target.result, file.name);
@@ -2459,7 +2459,7 @@ export default function AbrangenciaApp() {
               const token = window.prompt("Digite o token de administrador para limpar o histórico:");
               if (!token) return;
               try {
-                const r = await fetch("/api/limparHistoricoAbrangencia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
+                const r = await fetch("/api/abrangencia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
                 const data = await r.json();
                 if (!r.ok) throw new Error(data.error || "Erro desconhecido");
                 setHistoricoAbrangencia([]);
