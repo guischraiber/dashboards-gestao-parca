@@ -111,49 +111,10 @@ async function limparRawRowsSalvo() {
   } catch {}
 }
 
-// Mesma ideia acima, mas para os dados da aba "Coleta x Recebimento" — reaproveita
-// o mesmo banco/store, só numa chave diferente ("coletaRecebimento").
-async function carregarFatRowsSalvo() {
-  try {
-    const db = await abrirSlaDB();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readonly");
-      const req = tx.objectStore(SLA_STORE).get("coletaRecebimento");
-      req.onsuccess = () => resolve(req.result || null); // { rows, nome }
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function salvarFatRowsAtual(rows, nome) {
-  try {
-    const db = await abrirSlaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readwrite");
-      tx.objectStore(SLA_STORE).put({ rows, nome }, "coletaRecebimento");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return true;
-  } catch (e) {
-    console.warn("Não foi possível salvar a planilha de Coleta x Recebimento localmente:", e);
-    return false;
-  }
-}
-
-async function limparFatRowsSalvo() {
-  try {
-    const db = await abrirSlaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readwrite");
-      tx.objectStore(SLA_STORE).delete("coletaRecebimento");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
-}
+// A aba "Coleta x Recebimento" NÃO usa mais IndexedDB local — os dados agora
+// vêm do backend (api/coletaRecebimento.js / api/importarColetaRecebimento.js),
+// no mesmo padrão do Score, para que um import feito por qualquer pessoa
+// valha para todos os colaboradores, sem precisar reimportar por navegador.
 
 // ── CSV Parser ─────────────────────────────────────────────────────────────────
 const parseCSV = (text) => {
@@ -878,46 +839,78 @@ const AbaRelatorios = ({rawRows,weeklyMerged,pdMerged,monthlyData,parceirosDisp,
 // Recebimento da Coleta, entre outras) e mostra em quantos dias úteis a coleta
 // foi recebida depois de realizada, com filtro por período e por parça.
 // ══════════════════════════════════════════════════════════════════════════════
+// Lê um File como texto puro (mesmo helper usado no ImportView do Score).
+function lerArquivoComoTextoFat(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+function parseCsvColetaRecebimento(texto) {
+  const resultado = Papa.parse(texto, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: h => (h || "").trim(),
+    transform: v => (v == null ? "" : String(v).trim()),
+  });
+  return resultado.data;
+}
+
 const AbaFaturamentoColeta = ({
   parseCSVFn, busdays_r,
   rows, setRows, nome, setNome,
   periodoIni, setPeriodoIni, periodoFim, setPeriodoFim,
   parceiroSel, setParceiroSel,
   diasCorridos, setDiasCorridos,
+  onImportado,
 }) => {
   const [loading, setLoading] = useState("");
   const [erroUpload, setErroUpload] = useState("");
-  const [avisoPersistencia, setAvisoPersistencia] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [resultadoImport, setResultadoImport] = useState(null);
 
-  const carregar = (file) => {
+  // Envia a planilha para o backend (api/importarColetaRecebimento.js) — os
+  // dados passam a ficar salvos no repositório, visíveis para qualquer pessoa
+  // que acessar o dashboard depois do próximo deploy (~1 minuto), e não mais
+  // só no navegador de quem importou.
+  const carregar = async (file) => {
     setLoading(file.name);
     setErroUpload("");
-    setAvisoPersistencia(false);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      worker: false,
-      transformHeader: h => (h || "").trim(),
-      transform: v => (v == null ? "" : String(v).trim()),
-      complete: (results) => {
-        if (results.errors && results.errors.length > 0) {
-          console.warn("Avisos ao ler CSV:", results.errors.slice(0, 5));
-        }
-        setRows(results.data);
-        setNome(file.name);
-        setLoading("");
-        salvarFatRowsAtual(results.data, file.name).then(ok => setAvisoPersistencia(!ok));
-      },
-      error: (err) => {
-        setErroUpload(`Não consegui processar este arquivo: ${err?.message || err}`);
-        setLoading("");
-      },
-    });
+    setResultadoImport(null);
+    try {
+      const texto = await lerArquivoComoTextoFat(file);
+      const dados = parseCsvColetaRecebimento(texto);
+      // Mostra o resultado localmente na hora, sem esperar o redeploy —
+      // quem importou já vê a análise; os demais colaboradores veem depois
+      // do próximo deploy do Vercel, quando abrirem a página.
+      setRows(dados);
+      setNome(file.name);
+      setLoading("");
+      setEnviando(true);
+      const r = await fetch("/api/importarColetaRecebimento", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: texto, nome: file.name }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+      setResultadoImport({ ok: true, mensagem: data.mensagem });
+      // Atualiza o histórico de importações (Configurações) para refletir o
+      // novo registro salvo no servidor.
+      if (onImportado) onImportado();
+    } catch (e) {
+      setErroUpload(`Não consegui importar: ${e?.message || e}`);
+    } finally {
+      setLoading("");
+      setEnviando(false);
+    }
   };
 
-  const limparSalvo = () => {
-    if (!window.confirm("Remover esta planilha? Você vai precisar reimportar para ver os dados de novo.")) return;
-    limparFatRowsSalvo();
+  const limparView = () => {
+    if (!window.confirm("Isso só limpa a visualização local. A planilha continua salva para todos — para removê-la de vez, importe uma planilha vazia ou uma nova planilha por cima.")) return;
     setRows([]);
     setNome("");
   };
@@ -996,7 +989,7 @@ const AbaFaturamentoColeta = ({
   return (
     <div style={{marginTop:28}}>
       <div style={{fontWeight:700, fontSize:15, marginBottom:2}}>📦 Coleta x Recebimento ({unidadePl})</div>
-      <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:10}}>A última planilha importada aqui fica salva neste navegador — não precisa reimportar toda vez que abrir a página.</div>
+      <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:10}}>A planilha importada aqui fica salva no servidor — vale para todos os colaboradores que acessam o dashboard, sem precisar reimportar por navegador.</div>
 
       <div style={{display:"flex", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:16}}>
         <label style={{cursor:"pointer", padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
@@ -1004,13 +997,14 @@ const AbaFaturamentoColeta = ({
           📂 Importar planilha (Faturamentos Analítico)
         </label>
         {nome && <span style={{fontSize:12, color:C.cinzaTexto}}>Arquivo: <strong>{nome}</strong> ({rows.length} linhas)</span>}
-        {nome && <button onClick={limparSalvo}
+        {nome && <button onClick={limparView}
           style={{fontSize:11, color:C.cinzaTexto, background:"transparent", border:`1px solid ${C.cinzaBorda}`, borderRadius:6, padding:"4px 10px", cursor:"pointer"}}>
           🗑️ Remover
         </button>}
-        {avisoPersistencia && <span style={{fontSize:11, color:C.amarelo, fontWeight:600}}>⚠️ Não consegui salvar neste navegador — ao recarregar a página, será preciso reimportar.</span>}
-        {loading && <span style={{fontSize:12, color:C.laranja}}>Processando {loading}...</span>}
+        {loading && <span style={{fontSize:12, color:C.laranja}}>Lendo {loading}...</span>}
+        {enviando && <span style={{fontSize:12, color:C.laranja}}>Enviando para o servidor...</span>}
         {erroUpload && <span style={{fontSize:12, color:C.vermelho, fontWeight:600}}>⚠️ {erroUpload}</span>}
+        {resultadoImport?.ok && <span style={{fontSize:12, color:C.verde, fontWeight:600}}>✅ {resultadoImport.mensagem}</span>}
       </div>
 
       {rows.length>0 && <>
@@ -1202,6 +1196,7 @@ export default function SlaApp() {
   const [fatPeriodoFim, setFatPeriodoFim] = useState("");
   const [fatParceiro, setFatParceiro] = useState("Todos");
   const [fatDiasCorridos, setFatDiasCorridos] = useState(false); // false = dias úteis (padrão), true = dias corridos
+  const [historicoFat, setHistoricoFat] = useState([]); // histórico de importações de Coleta x Recebimento (vem do backend)
   const [csvResumo,   setCsvResumo]   = useState({novas:[],retroativas:[],variacoes:[]});
 
   const [abaGlobal,   setAbaGlobal]   = useState("geral");
@@ -1241,17 +1236,28 @@ export default function SlaApp() {
     })();
   }, []);
 
-  // Restaurar a última planilha importada na aba "Coleta x Recebimento", igual
-  // já é feito para o CSV principal acima.
-  useEffect(() => {
-    (async () => {
-      const salvo = await carregarFatRowsSalvo();
-      if (salvo && salvo.rows && salvo.rows.length) {
-        setFatRows(salvo.rows);
-        setFatNome(salvo.nome || "");
+  // Carregar a planilha de "Coleta x Recebimento" do backend (data/coletaRecebimento.csv
+  // no GitHub, servido por api/coletaRecebimento.js) — importada por qualquer
+  // colaborador, vale para todos, sem depender de IndexedDB local. Também
+  // reaproveitada depois de um novo import (para atualizar o histórico) e pelo
+  // botão "🔄 Verificar atualização" da Configurações.
+  const recarregarColetaRecebimento = useCallback(async () => {
+    try {
+      const r = await fetch("/api/coletaRecebimento");
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data && data.csv) {
+        const dados = parseCsvColetaRecebimento(data.csv);
+        setFatRows(dados);
+        setFatNome(data.nome || "");
       }
-    })();
+      setHistoricoFat(data?.historico || []);
+    } catch (e) {
+      console.warn("Não foi possível carregar Coleta x Recebimento do servidor:", e);
+    }
   }, []);
+
+  useEffect(() => { recarregarColetaRecebimento(); }, [recarregarColetaRecebimento]);
 
   // Carregar dados de um link compartilhado (?d=...) — mescla com o que já
   // está salvo neste navegador, igual ao CSAT.
@@ -2177,6 +2183,7 @@ export default function SlaApp() {
           periodoFim={fatPeriodoFim} setPeriodoFim={setFatPeriodoFim}
           parceiroSel={fatParceiro} setParceiroSel={setFatParceiro}
           diasCorridos={fatDiasCorridos} setDiasCorridos={setFatDiasCorridos}
+          onImportado={recarregarColetaRecebimento}
         />
       }
 
@@ -2320,6 +2327,43 @@ export default function SlaApp() {
             {avisoPersistenciaCSV&&<div style={{fontSize:11,color:C.amarelo,marginTop:4,fontWeight:600}}>⚠️ Não consegui salvar neste navegador — ao recarregar a página, será preciso reimportar.</div>}
           </div>
           {rawRows.length>0&&<button onClick={()=>{if(!window.confirm("Apagar o CSV bruto salvo? Semana e os indicadores de Mês/Trimestre/Ano continuam funcionando (usam cache separado). Só as abas Cidades, Problemas, Atrasos e Relatórios ficam em branco até você reimportar.")) return;limparRawRowsSalvo();setRawRows([]);setCsvNome("");setCsvStatus("idle");}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar</button>}
+        </div>
+
+        {/* Histórico de importações — Coleta x Recebimento (vem do backend,
+            data/historicoColetaRecebimento.json, mesmo padrão do Score).
+            Limpar exige o ADMIN_TOKEN, já que é uma operação destrutiva que
+            afeta o que todos os colaboradores veem. */}
+        <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
+          <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — Coleta x Recebimento</div>
+              <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+            </div>
+            {historicoFat.length>0&&<button onClick={async()=>{
+              const token = window.prompt("Digite o token de administrador para limpar o histórico:");
+              if(!token) return;
+              try{
+                const r = await fetch("/api/limparHistoricoColetaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
+                const data = await r.json();
+                if(!r.ok) throw new Error(data.error||"Erro desconhecido");
+                setHistoricoFat([]);
+              }catch(e){
+                alert(`Não consegui limpar: ${e?.message||e}`);
+              }
+            }} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar histórico</button>}
+          </div>
+          {historicoFat.length===0
+            ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhuma planilha importada ainda.</div>
+            :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+              <tbody>{[...historicoFat].reverse().map((h,i)=>(
+                <tr key={i} style={{borderTop:`1px solid ${C.cinzaBorda}`}}>
+                  <td style={{padding:"8px 14px",textAlign:"center",color:C.cinzaTexto}}>{historicoFat.length-i}</td>
+                  <td style={{padding:"8px 14px",fontWeight:600}}>{h.arquivo||"—"}</td>
+                  <td style={{padding:"8px 14px",textAlign:"center",color:C.cinzaTexto}}>{h.data?new Date(h.data).toLocaleString("pt-BR"):"—"}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>}
         </div>
 
         {/* Variações de volume */}
