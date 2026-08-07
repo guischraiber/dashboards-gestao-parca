@@ -853,7 +853,7 @@ const AbaFaturamentoColeta = ({
             : `Resposta inesperada do servidor (status ${r.status}).`
         );
       }
-      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
       setResultadoImport({ ok: true, mensagem: data.mensagem });
       // Atualiza o histórico de importações (Configurações) para refletir o
       // novo registro salvo no servidor.
@@ -1510,7 +1510,7 @@ export default function SlaApp() {
             : `Resposta inesperada do servidor (status ${r.status}).`
         );
       }
-      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
       setHistoricoSla(prev => [...prev, { data: new Date().toISOString(), arquivo: nomeArquivo }]);
     } catch (e) {
       setErroEnvioSla(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
@@ -2374,7 +2374,7 @@ export default function SlaApp() {
               try{
                 const r = await fetch("/api/sla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
                 const data = await r.json();
-                if(!r.ok) throw new Error(data.error||"Erro desconhecido");
+                if(!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
                 setHistoricoSla([]);
               }catch(e){
                 alert(`Não consegui limpar: ${e?.message||e}`);
@@ -2411,7 +2411,7 @@ export default function SlaApp() {
               try{
                 const r = await fetch("/api/coletaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
                 const data = await r.json();
-                if(!r.ok) throw new Error(data.error||"Erro desconhecido");
+                if(!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
                 setHistoricoFat([]);
               }catch(e){
                 alert(`Não consegui limpar: ${e?.message||e}`);
