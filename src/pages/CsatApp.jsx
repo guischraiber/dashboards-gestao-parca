@@ -1582,7 +1582,7 @@ export default function CsatApp() {
                 </div>
 
                 {/* Histórico de importações — vem do backend, mesmo padrão do
-                    Score / SLA / Coleta x Recebimento. Limpar exige ADMIN_TOKEN. */}
+                    Score / SLA / Coleta x Recebimento. Limpar só pede confirmação. */}
                 <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, overflow: "hidden" }}>
                   <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.cinzaBorda}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
@@ -1591,10 +1591,9 @@ export default function CsatApp() {
                     </div>
                     {historicoCsat.length > 0 && (
                       <button onClick={async () => {
-                        const token = window.prompt("Digite o token de administrador para limpar o histórico:");
-                        if (!token) return;
+                        if (!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
                         try {
-                          const r = await fetch("/api/csat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: token }) });
+                          const r = await fetch("/api/csat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: true }) });
                           const data = await r.json();
                           if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
                           setHistoricoCsat([]);
