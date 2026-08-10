@@ -9,12 +9,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Use POST.' });
   }
 
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-  const { admin } = req.body || {};
-
-  if (!ADMIN_TOKEN || admin !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Token de acesso inválido.' });
-  }
+  // Sem exigência de ADMIN_TOKEN — mesmo padrão do restante do dashboard
+  // (quem acessa a visão interna do Score já não precisa de token em
+  // nenhum outro lugar do app).
 
   const { token, owner, repo, branch } = credenciaisGithub();
   if (!token || !owner || !repo) {
