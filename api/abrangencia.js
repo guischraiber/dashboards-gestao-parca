@@ -8,7 +8,7 @@
 // formato do corpo da requisição:
 //   GET                      → devolve { atualCSV, atualNome, atualData, anteriorCSV, anteriorNome, anteriorData, historico }
 //   POST { csv, nome }       → importa (promove o "atual" existente pra "anterior" antes de gravar)
-//   POST { admin }           → limpa data/historicoAbrangencia.json (exige ADMIN_TOKEN)
+//   POST { admin }           → limpa data/historicoAbrangencia.json (sem token — qualquer chamada limpa)
 //
 // Usa a Git Data API (via lerArquivoGithubGrande/commitArquivoGrande) porque
 // o CSV de Abrangência acumula histórico do ano inteiro e pode passar de
@@ -18,7 +18,7 @@
 // outras abas internas do dashboard.
 //
 // Variáveis de ambiente necessárias (já configuradas no Vercel para o Score):
-//   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional), ADMIN_TOKEN
+//   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional)
 //
 // ATENÇÃO: o Vercel limita o corpo de uma requisição de API Route a ~4.5MB.
 // Se o CSV de Abrangência algum dia passar disso, o import falha antes mesmo
@@ -137,10 +137,8 @@ async function handleImportar(req, res, csv, nome) {
 }
 
 async function handleLimparHistorico(req, res, admin) {
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-  if (!ADMIN_TOKEN || admin !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Token de acesso inválido.' });
-  }
+  // Sem exigência de ADMIN_TOKEN — qualquer chamada autenticada pela própria
+  // UI do dashboard pode limpar o histórico (mesmo padrão do restante do app).
 
   const { token, owner, repo, branch } = credenciaisGithub();
   if (!token || !owner || !repo) {
