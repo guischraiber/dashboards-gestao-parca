@@ -7,7 +7,7 @@
 // 1 só, roteado por método e pelo formato do corpo da requisição:
 //   GET                                              → devolve { respostasCSV, disparosCSV, nomeRespostas, nomeDisparos, historico }
 //   POST { respostas, disparos, nomeRespostas, nomeDisparos } → importa
-//   POST { admin }                                   → limpa data/historicoCsat.json (exige ADMIN_TOKEN)
+//   POST { admin }                                   → limpa data/historicoCsat.json (sem token — qualquer chamada limpa)
 //
 // Usa a Git Data API (via lerArquivoGithubGrande/commitArquivoGrande) porque
 // a base de Respostas costuma vir com texto livre nos comentários e pode
@@ -17,7 +17,7 @@
 // outras abas internas do dashboard.
 //
 // Variáveis de ambiente necessárias (já configuradas no Vercel para o Score):
-//   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional), ADMIN_TOKEN
+//   GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH (opcional)
 //
 // ATENÇÃO: o Vercel limita o corpo de uma requisição de API Route a ~4.5MB.
 // Pra não esbarrar nisso quando a base de Respostas cresce (texto livre nos
@@ -117,10 +117,8 @@ async function handleImportar(req, res, respostas, disparos, nomeRespostas, nome
 }
 
 async function handleLimparHistorico(req, res, admin) {
-  const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
-  if (!ADMIN_TOKEN || admin !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Token de acesso inválido.' });
-  }
+  // Sem exigência de ADMIN_TOKEN — qualquer chamada autenticada pela própria
+  // UI do dashboard pode limpar o histórico (mesmo padrão do restante do app).
 
   const { token, owner, repo, branch } = credenciaisGithub();
   if (!token || !owner || !repo) {
