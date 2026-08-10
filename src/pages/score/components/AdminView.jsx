@@ -421,7 +421,7 @@ export default function AdminView() {
         </>
       )}
 
-      {aba === 'importar' && <ImportView token={token} historico={historico} onImportado={carregar} />}
+      {aba === 'importar' && <ImportView historico={historico} onImportado={carregar} />}
 
       {aba === 'qualidade' && (
         <div className="card">
