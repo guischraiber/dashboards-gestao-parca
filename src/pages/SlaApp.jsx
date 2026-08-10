@@ -2366,7 +2366,7 @@ export default function SlaApp() {
 
         {/* Histórico de importações — CSV bruto do SLA (vem do backend,
             data/historicoSla.json, mesmo padrão do Score / Coleta x
-            Recebimento). Limpar exige o ADMIN_TOKEN. */}
+            Recebimento). Limpar só pede confirmação. */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
           <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div>
@@ -2374,10 +2374,9 @@ export default function SlaApp() {
               <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
             </div>
             {historicoSla.length>0&&<button onClick={async()=>{
-              const token = window.prompt("Digite o token de administrador para limpar o histórico:");
-              if(!token) return;
+              if(!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
               try{
-                const r = await fetch("/api/sla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
+                const r = await fetch("/api/sla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:true})});
                 const data = await r.json();
                 if(!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
                 setHistoricoSla([]);
@@ -2402,8 +2401,8 @@ export default function SlaApp() {
 
         {/* Histórico de importações — Coleta x Recebimento (vem do backend,
             data/historicoColetaRecebimento.json, mesmo padrão do Score).
-            Limpar exige o ADMIN_TOKEN, já que é uma operação destrutiva que
-            afeta o que todos os colaboradores veem. */}
+            Limpar só pede confirmação no navegador, já que é uma operação
+            destrutiva que afeta o que todos os colaboradores veem. */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
           <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div>
@@ -2411,10 +2410,9 @@ export default function SlaApp() {
               <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
             </div>
             {historicoFat.length>0&&<button onClick={async()=>{
-              const token = window.prompt("Digite o token de administrador para limpar o histórico:");
-              if(!token) return;
+              if(!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
               try{
-                const r = await fetch("/api/coletaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:token})});
+                const r = await fetch("/api/coletaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:true})});
                 const data = await r.json();
                 if(!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
                 setHistoricoFat([]);
