@@ -1151,10 +1151,12 @@ export default function SlaApp() {
   const [linkAviso,      setLinkAviso]      = useState("");
   const [fromURL,        setFromURL]        = useState(false);
   const [uploadHistory,  setUploadHistory]  = useState(()=>{ try{const s=localStorage.getItem("slaParca_hist"); return s?JSON.parse(s):[];}catch{return [];} });
+  const [mostrarUploadHistory, setMostrarUploadHistory] = useState(true);
   const [variacaoVol,    setVariacaoVol]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_var");  return s?JSON.parse(s):[];}catch{return [];} });
   const [enviandoSla,     setEnviandoSla]     = useState(false); // enviando o CSV bruto pro backend (api/sla.js, POST)
   const [erroEnvioSla,    setErroEnvioSla]    = useState("");
   const [historicoSla,    setHistoricoSla]    = useState([]); // histórico de importações do CSV bruto (vem do backend)
+  const [mostrarHistoricoSla, setMostrarHistoricoSla] = useState(true);
 
   const [csvStatus,   setCsvStatus]   = useState("idle"); // idle | processando | ok | erro
   const [csvNome,     setCsvNome]     = useState("");
@@ -1173,6 +1175,7 @@ export default function SlaApp() {
   const [fatParceiro, setFatParceiro] = useState("Todos");
   const [fatDiasCorridos, setFatDiasCorridos] = useState(false); // false = dias úteis (padrão), true = dias corridos
   const [historicoFat, setHistoricoFat] = useState([]); // histórico de importações de Coleta x Recebimento (vem do backend)
+  const [mostrarHistoricoFat, setMostrarHistoricoFat] = useState(true);
   const [csvResumo,   setCsvResumo]   = useState({novas:[],retroativas:[],variacoes:[]});
 
   const [abaGlobal,   setAbaGlobal]   = useState("geral");
@@ -2368,12 +2371,16 @@ export default function SlaApp() {
             data/historicoSla.json, mesmo padrão do Score / Coleta x
             Recebimento). Limpar só pede confirmação. */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-          <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — CSV Bruto (SLA)</div>
-              <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+          <div onClick={()=>setMostrarHistoricoSla(v=>!v)} style={{padding:"14px 20px",borderBottom: mostrarHistoricoSla ? `1px solid ${C.cinzaBorda}` : "none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarHistoricoSla?"▾":"▸"}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — CSV Bruto (SLA){!mostrarHistoricoSla && historicoSla.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({historicoSla.length})</span>}</div>
+                <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+              </div>
             </div>
-            {historicoSla.length>0&&<button onClick={async()=>{
+            {historicoSla.length>0&&<button onClick={async(e)=>{
+              e.stopPropagation();
               if(!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
               try{
                 const r = await fetch("/api/sla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:true})});
@@ -2385,7 +2392,7 @@ export default function SlaApp() {
               }
             }} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar histórico</button>}
           </div>
-          {historicoSla.length===0
+          {!mostrarHistoricoSla ? null : historicoSla.length===0
             ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhum CSV importado ainda.</div>
             :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
@@ -2404,12 +2411,16 @@ export default function SlaApp() {
             Limpar só pede confirmação no navegador, já que é uma operação
             destrutiva que afeta o que todos os colaboradores veem. */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-          <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — Coleta x Recebimento</div>
-              <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+          <div onClick={()=>setMostrarHistoricoFat(v=>!v)} style={{padding:"14px 20px",borderBottom: mostrarHistoricoFat ? `1px solid ${C.cinzaBorda}` : "none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarHistoricoFat?"▾":"▸"}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — Coleta x Recebimento{!mostrarHistoricoFat && historicoFat.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({historicoFat.length})</span>}</div>
+                <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+              </div>
             </div>
-            {historicoFat.length>0&&<button onClick={async()=>{
+            {historicoFat.length>0&&<button onClick={async(e)=>{
+              e.stopPropagation();
               if(!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
               try{
                 const r = await fetch("/api/coletaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:true})});
@@ -2421,7 +2432,7 @@ export default function SlaApp() {
               }
             }} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar histórico</button>}
           </div>
-          {historicoFat.length===0
+          {!mostrarHistoricoFat ? null : historicoFat.length===0
             ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhuma planilha importada ainda.</div>
             :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
@@ -2489,11 +2500,14 @@ export default function SlaApp() {
 
         {/* Histórico de uploads */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-          <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontWeight:700,fontSize:14}}>📂 Histórico de Uploads</div><div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>CSVs importados — salvo entre sessões.</div></div>
-            {uploadHistory.length>0&&<button onClick={()=>{if(!window.confirm("Limpar histórico?")) return;try{localStorage.removeItem("slaParca_hist");}catch{}setUploadHistory([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>}
+          <div onClick={()=>setMostrarUploadHistory(v=>!v)} style={{padding:"14px 20px",borderBottom: mostrarUploadHistory ? `1px solid ${C.cinzaBorda}` : "none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarUploadHistory?"▾":"▸"}</span>
+              <div><div style={{fontWeight:700,fontSize:14}}>📂 Histórico de Uploads{!mostrarUploadHistory && uploadHistory.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({uploadHistory.length})</span>}</div><div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>CSVs importados — salvo entre sessões.</div></div>
+            </div>
+            {uploadHistory.length>0&&<button onClick={(e)=>{e.stopPropagation();if(!window.confirm("Limpar histórico?")) return;try{localStorage.removeItem("slaParca_hist");}catch{}setUploadHistory([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>}
           </div>
-          {uploadHistory.length===0
+          {!mostrarUploadHistory ? null : uploadHistory.length===0
             ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhum CSV importado ainda.</div>
             :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora","Linhas"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
