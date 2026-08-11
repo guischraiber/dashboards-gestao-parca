@@ -24,6 +24,18 @@ async function lerCorpoBruto(req) {
   return Buffer.concat(chunks);
 }
 
+// Todos os pontos de sincronização conhecidos (mesma lista de PONTOS_SYNC em
+// src/syncRemoto.js) — mantidos aqui também pra "zerar tudo" poder apagar cada
+// chave explicitamente, sem depender do comando KEYS (que nem todo backend de
+// KV expõe/recomenda em produção).
+const TODAS_CHAVES = [
+  "sla:csvBruto_atual", "sla:csvBruto_coletaRecebimento", "sla:csvBruto_coletaRecebimentoAnterior",
+  "sla:weekly", "sla:pd",
+  "csat:dados_parsed", "csat:dadosImportados_atual", "csat:semanas_travadas",
+  "abrangencia:dados_atual", "abrangencia:dados_anterior",
+  "weekly:racionais", "weekly:assuntosGerais", "weekly:problemasColeta",
+];
+
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
@@ -56,6 +68,19 @@ export default async function handler(req, res) {
       const comprimidoBase64 = bruto.toString("base64");
       await kv.set(nomeChave(store, key), comprimidoBase64);
       return res.status(200).json({ ok: true, atualizadoEm: new Date().toISOString() });
+    }
+
+    if (req.method === "DELETE") {
+      const { limparTudo, store, key } = req.query || {};
+      if (limparTudo) {
+        await Promise.all(
+          TODAS_CHAVES.map((chave) => kv.del(`parca-sync:${chave}`))
+        );
+        return res.status(200).json({ ok: true, removidas: TODAS_CHAVES.length });
+      }
+      if (!store || !key) return res.status(400).json({ erro: "store e key são obrigatórios (ou use ?limparTudo=1)" });
+      await kv.del(nomeChave(store, key));
+      return res.status(200).json({ ok: true });
     }
 
     return res.status(405).json({ erro: "método não suportado" });
