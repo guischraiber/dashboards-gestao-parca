@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
-import { sincronizarAntesDeLer, publicarApósImportar } from "../syncRemoto";
+import { sincronizarAntesDeLer, publicarApósImportar, limparTudoLocalERemoto } from "../syncRemoto";
 
 const C = {
   laranja:"#F97316", verde:"#16A34A", vermelho:"#DC2626", amarelo:"#CA8A04",
@@ -729,6 +729,13 @@ export default function WeeklyApp() {
             const b=new Blob([html],{type:"text/html"}); const u=URL.createObjectURL(b); const a=document.createElement("a"); a.href=u;a.download=`weekly-${selA!=null?lbl(selA):"periodo"}.html`;a.click();URL.revokeObjectURL(u);
           }} style={{padding:"9px 16px",borderRadius:8,border:`1.5px solid ${C.azul}`,background:"transparent",color:C.azul,fontSize:13,fontWeight:700,cursor:"pointer"}}>⬇ Exportar HTML</button>
           <button onClick={()=>{const w=window.open("","_blank"); if(w){w.document.write(`<html><body style="font-family:Arial;padding:40px;max-width:960px;margin:0 auto"><h1>Weekly — ${selA!=null?lbl(selA):"—"}</h1></body></html>`);w.document.close();setTimeout(()=>w.print(),600);}}} style={{padding:"9px 16px",borderRadius:8,background:C.laranja,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:"pointer"}}>🖨️ Exportar PDF</button>
+          <button onClick={async()=>{
+            if(!window.confirm("Isso apaga TODOS os dados salvos localmente neste navegador (SLA, CSAT, Abrangência e os racionais/assuntos/problemas do Weekly) e também a cópia compartilhada no servidor (Vercel KV). Não afeta os dados do GitHub usados pelas abas SLA/CSAT/Abrangência/Score — isso é zerado direto no repositório. Quer continuar?")) return;
+            if(!window.confirm("Tem certeza mesmo? Essa ação não pode ser desfeita, e os outros colaboradores também vão perder a cópia compartilhada.")) return;
+            const {remotoOk} = await limparTudoLocalERemoto();
+            alert(remotoOk ? "Tudo zerado (local e servidor). A página vai recarregar." : "Local zerado, mas não consegui limpar o servidor (Vercel KV) — confira a configuração. A página vai recarregar mesmo assim.");
+            window.location.reload();
+          }} style={{padding:"9px 16px",borderRadius:8,border:`1.5px solid ${C.vermelho}`,background:"transparent",color:C.vermelho,fontSize:13,fontWeight:700,cursor:"pointer"}}>🧹 Zerar tudo (local + servidor)</button>
         </div>
       </div>
 
