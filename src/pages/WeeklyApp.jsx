@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
 import { sincronizarAntesDeLer, publicarApósImportar, limparTudoLocalERemoto } from "../syncRemoto";
+import { parseCSV, parseCsvColetaRecebimento } from "./SlaApp.jsx";
+import { parseCSVAbrangencia } from "./AbrangenciaApp.jsx";
 
 const C = {
   laranja:"#F97316", verde:"#16A34A", vermelho:"#DC2626", amarelo:"#CA8A04",
@@ -332,18 +334,33 @@ export default function WeeklyApp() {
   useEffect(()=>{
     (async()=>{
       // Busca a versão mais recente do backend compartilhado (se configurado) e
-      // atualiza a cópia local antes de ler — assim quem só visualiza não precisa importar.
+      // atualiza a cópia local antes de ler. slaCsvAtual/slaCr/slaCrAnterior/
+      // abrangAtual/abrangAnterior saíram desta lista porque esses dados agora
+      // vêm direto do backend (fetch abaixo) — o SLA e a Abrangência migraram
+      // para lá e pararam de escrever nesses pontos de sincronização, então
+      // mantê-los aqui só custava uma chamada extra sem efeito nenhum.
       await sincronizarAntesDeLer([
-        "slaCsvAtual","slaCr","slaCrAnterior","slaWeekly","slaPd",
-        "csatParsed","csatDadosImportados","csatSemanasTrav","abrangAtual","abrangAnterior",
+        "slaWeekly","slaPd","csatParsed","csatDadosImportados","csatSemanasTrav",
       ]);
 
       const wRaw = lerLS("slaParca_weekly",[]);
       const pdRaw= lerLS("slaParca_pd",{});
-      const csvSalvo = await lerIDB("slaParcaDB","csvBruto","atual");
+      // SLA — busca direto do backend (data/slaBruto.csv no GitHub, via
+      // api/sla.js), a mesma fonte que a aba Performance Coleta usa. Isso
+      // substitui a leitura antiga de IndexedDB (slaParcaDB), que ficou sem
+      // ninguém escrevendo nela depois que o SLA migrou para o backend
+      // compartilhado — por isso o Weekly ficava sem dado pra quem não
+      // importou manualmente na própria aba SLA daquele navegador.
       let rows = [];
-      if(csvSalvo?.rows) rows = csvSalvo.rows;
-      else if(typeof csvSalvo==="string") rows = Papa.parse(csvSalvo,{header:true,skipEmptyLines:true}).data;
+      try {
+        const rSla = await fetch("/api/sla");
+        if (rSla.ok) {
+          const dataSla = await rSla.json();
+          if (dataSla?.csv) rows = parseCSV(dataSla.csv);
+        }
+      } catch (e) {
+        console.warn("Weekly: não consegui buscar o SLA do servidor:", e);
+      }
       // Normaliza o nome do parceiro (Transportadora) para evitar duplicidade no filtro
       rows = rows.map(r => r["Transportadora"] ? {...r, "Transportadora": normalizarParceiro(r["Transportadora"])} : r);
       setRawRows(rows);
@@ -490,8 +507,23 @@ export default function WeeklyApp() {
       setCsatSlots(csatSlimEnriq);
       setCsatPorParceiro(csatPPCanon);
 
-      // Abrangência — usa rows do IDB diretamente (mes já é número, confirmado)
-      const abr = await lerIDB("abrangenciaParcaDB2","dados","atual");
+      // Abrangência — busca direto do backend (data/abrangenciaAtual.csv no
+      // GitHub, via api/abrangencia.js), a mesma fonte que a aba Abrangência
+      // Parça usa, com o mesmo parser (parseCSVAbrangencia) — mesmo motivo do
+      // SLA acima: a aba Abrangência não escreve mais em abrangenciaParcaDB2
+      // desde que migrou para o backend compartilhado.
+      let abr = null;
+      try {
+        const rAbr = await fetch("/api/abrangencia");
+        if (rAbr.ok) {
+          const dataAbr = await rAbr.json();
+          if (dataAbr?.atualCSV) {
+            abr = { rows: parseCSVAbrangencia(dataAbr.atualCSV), nome: dataAbr.atualNome, data: dataAbr.atualData };
+          }
+        }
+      } catch (e) {
+        console.warn("Weekly: não consegui buscar a Abrangência do servidor:", e);
+      }
       setAbrangAtual(abr||null);
 
       if(abr?.rows?.length){
@@ -502,14 +534,26 @@ export default function WeeklyApp() {
         const parca = julParca.reduce((s,r)=>s+(r.abrangencia||0),0);
       }
 
-      // Coleta x Recebimento (atual e anterior)
-      const cr = await lerIDB("slaParcaDB","csvBruto","coletaRecebimento");
-      const crAnt = await lerIDB("slaParcaDB","csvBruto","coletaRecebimentoAnterior");
+      // Coleta x Recebimento — busca direto do backend (data/coletaRecebimento.csv
+      // no GitHub, via api/coletaRecebimento.js), mesma fonte que a aba SLA usa.
+      // Esse endpoint só guarda a versão atual (sem "anterior" — diferente de
+      // Abrangência), então crRowsAnt fica vazio mesmo; as telas já tratam
+      // esse caso mostrando só o período atual, sem comparação.
+      let crRowsFetch = [];
+      try {
+        const rCr = await fetch("/api/coletaRecebimento");
+        if (rCr.ok) {
+          const dataCr = await rCr.json();
+          if (dataCr?.csv) crRowsFetch = parseCsvColetaRecebimento(dataCr.csv);
+        }
+      } catch (e) {
+        console.warn("Weekly: não consegui buscar Coleta x Recebimento do servidor:", e);
+      }
       const normalizarLinhasCR = (linhas) => (linhas||[]).map(r =>
         r["Parceiro Nome"] ? {...r, "Parceiro Nome": normalizarParceiro(r["Parceiro Nome"])} : r
       );
-      setCrRows(normalizarLinhasCR(cr?.rows));
-      setCrRowsAnt(normalizarLinhasCR(crAnt?.rows));
+      setCrRows(normalizarLinhasCR(crRowsFetch));
+      setCrRowsAnt([]);
 
       setLoading(false);
     })();
