@@ -46,6 +46,8 @@ function CampoArquivo({ label, arquivo, onChange, accept }) {
 }
 
 export default function ImportView({ token, historico = [], onImportado }) {
+  const [mostrarHistorico, setMostrarHistorico] = useState(true);
+
   // --- Fluxo principal: modelo único ---
   const [modelo, setModelo] = useState(null);
   const [enviandoModelo, setEnviandoModelo] = useState(false);
@@ -189,20 +191,23 @@ export default function ImportView({ token, historico = [], onImportado }) {
         )}
       </div>
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h2 style={{ margin: 0 }}>📂 Histórico de Importações</h2>
-            <p style={{ fontSize: 12, color: '#6B7280', marginTop: 4, marginBottom: 0 }}>
-              Fica salvo no repositório — visível pra qualquer um que acessar a visão interna.
-            </p>
+        <div onClick={() => setMostrarHistorico(v => !v)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: '#6B7280' }}>{mostrarHistorico ? '▾' : '▸'}</span>
+            <div>
+              <h2 style={{ margin: 0 }}>📂 Histórico de Importações{!mostrarHistorico && historico.length > 0 && <span style={{ fontWeight: 400, color: '#6B7280' }}> ({historico.length})</span>}</h2>
+              <p style={{ fontSize: 12, color: '#6B7280', marginTop: 4, marginBottom: 0 }}>
+                Fica salvo no repositório — visível pra qualquer um que acessar a visão interna.
+              </p>
+            </div>
           </div>
           {historico.length > 0 && (
-            <button className="btn btn-ghost" onClick={handleLimparHistorico} disabled={limpandoHistorico}>
+            <button className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); handleLimparHistorico(); }} disabled={limpandoHistorico}>
               {limpandoHistorico ? 'Limpando...' : '🗑️ Limpar'}
             </button>
           )}
         </div>
-        {historico.length === 0 ? (
+        {!mostrarHistorico ? null : historico.length === 0 ? (
           <p style={{ fontSize: 13, color: '#6B7280', marginTop: 14 }}>Nenhuma importação registrada ainda.</p>
         ) : (
           <table style={{ marginTop: 14 }}>
