@@ -1926,7 +1926,7 @@ function semanaISO(dateStr) {
   return Math.ceil(((tmp - yearStart) / 86400000 + 1) / 7);
 }
 
-function parseCSVAbrangencia(texto) {
+export function parseCSVAbrangencia(texto) {
   const { data } = Papa.parse(texto, { header:true, skipEmptyLines:true });
   return data
     .filter(r => r["Logistica Reversa Estado"] && r["Logistica Reversa Cidade"])
