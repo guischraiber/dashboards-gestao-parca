@@ -62,7 +62,7 @@ const sem = (v, meta, inv) => {
 // da Contents API simples.
 
 // ── CSV Parser ─────────────────────────────────────────────────────────────────
-const parseCSV = (text) => {
+export const parseCSV = (text) => {
   const sep = text.split("\n")[0].includes(";") ? ";" : ",";
   // Parser que lida com campos multilinhas (texto com \n dentro de aspas)
   const rows = [];
@@ -794,7 +794,7 @@ function lerArquivoComoTextoFat(file) {
   });
 }
 
-function parseCsvColetaRecebimento(texto) {
+export function parseCsvColetaRecebimento(texto) {
   const resultado = Papa.parse(texto, {
     header: true,
     skipEmptyLines: true,
