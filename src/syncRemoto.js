@@ -152,3 +152,40 @@ export async function publicarApósImportar(nomePonto, dados) {
   if (!ponto) return false;
   return await salvarRemoto(ponto.store, ponto.key, dados);
 }
+
+// ── Zerar tudo (local + remoto) ─────────────────────────────────────────────
+// Botão de manutenção: limpa, de uma vez, tudo que este arquivo sincroniza —
+// localStorage, os bancos IndexedDB usados pelos dashboards e as chaves
+// correspondentes no Vercel KV (api/sync.mjs). Não toca nos dados do GitHub
+// usados por SlaApp/CsatApp/AbrangenciaApp/Score (api/sla.js, api/csat.js,
+// api/abrangencia.js, api/coletaRecebimento.js, api/score.js) — isso é
+// zerado apagando os arquivos em data/ direto no repositório.
+export async function limparTudoLocalERemoto() {
+  // 1) localStorage — todas as chaves conhecidas em PONTOS_SYNC
+  const chavesLS = new Set();
+  Object.values(PONTOS_SYNC).forEach((p) => { if (p.tipo === "ls") chavesLS.add(p.chaveLocal); });
+  chavesLS.forEach((chave) => { try { localStorage.removeItem(chave); } catch {} });
+
+  // 2) IndexedDB — os bancos inteiros usados pelos dashboards
+  const bancos = new Set();
+  Object.values(PONTOS_SYNC).forEach((p) => { if (p.tipo === "idb") bancos.add(p.dbName); });
+  await Promise.all([...bancos].map((dbName) => new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(dbName);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    } catch { resolve(); }
+  })));
+
+  // 3) Remoto — todas as chaves parca-sync:* no Vercel KV
+  let remotoOk = false;
+  try {
+    const r = await fetch(`${SYNC_URL}?limparTudo=1`, { method: "DELETE" });
+    remotoOk = r.ok;
+  } catch {
+    remotoOk = false;
+  }
+
+  return { remotoOk };
+}
