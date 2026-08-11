@@ -385,6 +385,8 @@ export default function CsatApp() {
   const [enviandoCsat, setEnviandoCsat] = useState(false);
   const [erroEnvioCsat, setErroEnvioCsat] = useState("");
   const [historicoCsat, setHistoricoCsat] = useState([]);
+  const [mostrarHistoricoCsat, setMostrarHistoricoCsat] = useState(true);
+  const [mostrarUploadHistoryCsat, setMostrarUploadHistoryCsat] = useState(true);
   const [uploadHistory, setUploadHistory] = useState(() => {
     try { const s = localStorage.getItem("csat_upload_hist"); return s ? JSON.parse(s) : []; } catch { return []; }
   });
@@ -1584,13 +1586,17 @@ export default function CsatApp() {
                 {/* Histórico de importações — vem do backend, mesmo padrão do
                     Score / SLA / Coleta x Recebimento. Limpar só pede confirmação. */}
                 <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.cinzaBorda}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>📜 Histórico de Importações</div>
-                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+                  <div onClick={() => setMostrarHistoricoCsat(v => !v)} style={{ padding: "14px 20px", borderBottom: mostrarHistoricoCsat ? `1px solid ${C.cinzaBorda}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, color: C.cinzaTexto }}>{mostrarHistoricoCsat ? "▾" : "▸"}</span>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>📜 Histórico de Importações{!mostrarHistoricoCsat && historicoCsat.length > 0 && <span style={{ fontWeight: 400, color: C.cinzaTexto }}> ({historicoCsat.length})</span>}</div>
+                        <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+                      </div>
                     </div>
                     {historicoCsat.length > 0 && (
-                      <button onClick={async () => {
+                      <button onClick={async (e) => {
+                        e.stopPropagation();
                         if (!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
                         try {
                           const r = await fetch("/api/csat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: true }) });
@@ -1603,7 +1609,7 @@ export default function CsatApp() {
                       }} style={{ fontSize: 11, color: C.cinzaTexto, background: C.cinzaFundo, border: `1px solid ${C.cinzaBorda}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>🗑️ Limpar histórico</button>
                     )}
                   </div>
-                  {historicoCsat.length === 0 ? (
+                  {!mostrarHistoricoCsat ? null : historicoCsat.length === 0 ? (
                     <div style={{ padding: 20, color: C.cinzaTexto, fontSize: 13, textAlign: "center" }}>Nenhuma importação registrada ainda.</div>
                   ) : (
                     <div style={{ overflowX: "auto" }}>
@@ -1631,20 +1637,24 @@ export default function CsatApp() {
 
                 {/* Histórico de uploads (local, informativo) */}
                 <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, overflow: "hidden" }}>
-                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.cinzaBorda}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>📂 Histórico de Uploads (neste navegador)</div>
-                      <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>CSVs importados por aqui — só um registro local, não afeta os dados no servidor.</div>
+                  <div onClick={() => setMostrarUploadHistoryCsat(v => !v)} style={{ padding: "14px 20px", borderBottom: mostrarUploadHistoryCsat ? `1px solid ${C.cinzaBorda}` : "none", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, color: C.cinzaTexto }}>{mostrarUploadHistoryCsat ? "▾" : "▸"}</span>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>📂 Histórico de Uploads (neste navegador){!mostrarUploadHistoryCsat && uploadHistory.length > 0 && <span style={{ fontWeight: 400, color: C.cinzaTexto }}> ({uploadHistory.length})</span>}</div>
+                        <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>CSVs importados por aqui — só um registro local, não afeta os dados no servidor.</div>
+                      </div>
                     </div>
                     {uploadHistory.length > 0 && (
-                      <button onClick={() => {
+                      <button onClick={(e) => {
+                        e.stopPropagation();
                         if (!window.confirm("Limpar histórico?")) return;
                         try { localStorage.removeItem("csat_upload_hist"); } catch {}
                         setUploadHistory([]);
                       }} style={{ fontSize: 11, color: C.cinzaTexto, background: C.cinzaFundo, border: `1px solid ${C.cinzaBorda}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>🗑️ Limpar</button>
                     )}
                   </div>
-                  {uploadHistory.length === 0 ? (
+                  {!mostrarUploadHistoryCsat ? null : uploadHistory.length === 0 ? (
                     <div style={{ padding: 20, color: C.cinzaTexto, fontSize: 13, textAlign: "center" }}>Nenhum CSV importado ainda.</div>
                   ) : (
                     <div style={{ overflowX: "auto" }}>
