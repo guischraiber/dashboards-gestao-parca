@@ -343,7 +343,6 @@ export default function WeeklyApp() {
         "slaWeekly","slaPd","csatParsed","csatDadosImportados","csatSemanasTrav",
       ]);
 
-      const wRaw = lerLS("slaParca_weekly",[]);
       const pdRaw= lerLS("slaParca_pd",{});
       // SLA — busca direto do backend (data/slaBruto.csv no GitHub, via
       // api/sla.js), a mesma fonte que a aba Performance Coleta usa. Isso
@@ -375,11 +374,16 @@ export default function WeeklyApp() {
       // semMes: mês principal de cada semana (o mais frequente) para lookup simples
       const semMes = {};
       Object.entries(semMesSet).forEach(([s,ms])=>{ semMes[s]=[...ms][0]; });
-      // wEnriq: cada semana guarda seus meses possíveis
-      const wEnriq = wRaw.map(w=>({...w,
-        mes: semMes[w.s]||null,
-        meses: semMesSet[w.s]?[...semMesSet[w.s]]:[]
-      }));
+      // Catálogo de semanas — construído direto das linhas do servidor (semMesSet),
+      // não mais do cache local "slaParca_weekly" (que só existia em quem já tinha
+      // importado manualmente naquele navegador e por isso ficava vazio pra todo
+      // mundo mais). Os indicadores de cada semana são calculados ao vivo por
+      // calcFromRawRows/rawDoPeríodo a partir de rawRows, então aqui só precisamos
+      // de {s, mes, meses} pra montar o catálogo de períodos.
+      const wEnriq = Object.keys(semMesSet).map(sStr=>{
+        const s = parseInt(sStr);
+        return { s, mes: semMes[s]||null, meses: [...semMesSet[s]] };
+      });
       setWeekly(wEnriq.sort((a,b)=>a.s-b.s));
       // Canonicaliza as chaves de pd (nome do parceiro), mesclando semanas quando dois nomes
       // diferentes na base caírem no mesmo nome canônico
