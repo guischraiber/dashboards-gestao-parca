@@ -2158,6 +2158,69 @@ function gerarCSVDownload(rows) {
   return [header,...linhas].join("\n");
 }
 
+// ── Distribuição atual (quem é Parça em cada cidade HOJE) ─────────────────────
+// Arquivo simples de 3 colunas — usado pra simular a cobertura anual como se a
+// parceria de hoje já existisse desde o início do ano (ver calcularSimulacao).
+function parseCSVDistribuicaoAtual(texto) {
+  const { data } = Papa.parse(texto, { header: true, skipEmptyLines: true });
+  return data
+    .map(r => {
+      const norm = {};
+      Object.entries(r).forEach(([k, v]) => { norm[String(k).trim().toLowerCase()] = v; });
+      return {
+        estado: String(norm["estado"] || "").trim().toUpperCase(),
+        cidade: String(norm["cidade"] || "").trim(),
+        transportadora: String(
+          norm["transportadora"] || norm["parça"] || norm["parca"] ||
+          norm["parça/transportadora"] || norm["parca/transportadora"] || ""
+        ).trim(),
+      };
+    })
+    .filter(r => r.estado && r.cidade && r.transportadora);
+}
+
+function baixarModeloDistribuicao() {
+  const csv = "Estado,Cidade,Transportadora\nSP,Sao Paulo,Safari Montagem\n";
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "modelo-distribuicao-atual.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Recalcula a cobertura Parça do ano inteiro já importado, mas usando a distribuição
+// ATUAL (quem é Parça em cada cidade hoje) em vez da validação histórica de cada linha.
+// Cruzamento por Estado+Cidade+Transportadora: só credita como Parça o histórico
+// daquela transportadora específica nas cidades onde ela é parceira hoje — não mexe
+// nas outras transportadoras não-Parça da mesma cidade.
+function calcularSimulacao(rowsAno, rosterAtual) {
+  let totalReal = 0, parcaReal = 0, parcaSimulado = 0;
+  const porCidade = new Map();
+  rowsAno.forEach(r => {
+    const key = `${r.estado}|${normalizarCidade(r.cidade)}`;
+    const chaveRoster = `${r.estado}|${normalizarCidade(r.cidade)}|${normalizarCidade(r.transportadora)}`;
+    const ehParcaReal = r.validacao === "PARÇA";
+    const ehParcaSimulada = ehParcaReal || rosterAtual.has(chaveRoster);
+
+    totalReal += r.abrangencia;
+    if (ehParcaReal) parcaReal += r.abrangencia;
+    if (ehParcaSimulada) parcaSimulado += r.abrangencia;
+
+    if (!porCidade.has(key)) porCidade.set(key, { estado: r.estado, cidade: r.cidade, total: 0, parcaReal: 0, parcaSimulado: 0 });
+    const c = porCidade.get(key);
+    c.total += r.abrangencia;
+    if (ehParcaReal) c.parcaReal += r.abrangencia;
+    if (ehParcaSimulada) c.parcaSimulado += r.abrangencia;
+  });
+  const pctReal = totalReal > 0 ? (parcaReal / totalReal) * 100 : 0;
+  const pctSimulado = totalReal > 0 ? (parcaSimulado / totalReal) * 100 : 0;
+  const detalhe = [...porCidade.values()]
+    .map(c => ({ ...c, ganhoAbs: c.parcaSimulado - c.parcaReal, ganhoPct: c.total > 0 ? ((c.parcaSimulado - c.parcaReal) / c.total) * 100 : 0 }))
+    .filter(c => c.ganhoAbs > 0)
+    .sort((a, b) => b.ganhoAbs - a.ganhoAbs);
+  return { totalReal, parcaReal, parcaSimulado, pctReal, pctSimulado, deltaPP: pctSimulado - pctReal, detalhe };
+}
+
 // ── Pill de filtro reutilizável ───────────────────────────────────────────────
 function Pill({ ativo, onClick, children }) {
   return (
@@ -2167,6 +2230,17 @@ function Pill({ ativo, onClick, children }) {
       background: ativo ? `${C.laranja}18` : "transparent",
       color: ativo ? C.laranja : C.cinzaTexto,
     }}>{children}</button>
+  );
+}
+
+// ── Cabeçalho de tabela clicável pra ordenar (usado em "Onde Priorizar") ──────
+function ThOrdenavel({ label, sortKey, sortState, onSort, align }) {
+  const ativo = sortState.key === sortKey;
+  return (
+    <th onClick={() => onSort(sortKey)}
+      style={{ padding:"4px 6px", textAlign: align || "left", cursor:"pointer", userSelect:"none", color: ativo ? C.laranja : C.cinzaTexto, whiteSpace:"nowrap" }}>
+      {label} {ativo ? (sortState.dir === "desc" ? "▼" : "▲") : ""}
+    </th>
   );
 }
 
@@ -2267,6 +2341,12 @@ export default function AbrangenciaApp() {
   // ── Onde Priorizar (crescimento sem Parça)
   const [fCresEstado, setFCresEstado] = useState("Todos");
   const [somenteSemParca, setSomenteSemParca] = useState(false);
+  const [sortCrescimento, setSortCrescimento] = useState({ key: "deltaNaoParca", dir: "desc" });
+
+  // ── Simulação: Share Anual com Distribuição Atual
+  const [distribuicaoAtual, setDistribuicaoAtual] = useState(null); // { rows, nome, data }
+  const [loadingDist, setLoadingDist] = useState("");
+  const [erroDist, setErroDist] = useState("");
 
   // ── Filtros globais de período (usados em Visão Geral e Mapa)
   const [fgValidacao, setFgValidacao] = useState("Todos");
@@ -2289,9 +2369,27 @@ export default function AbrangenciaApp() {
     (async () => {
       const a = await carregarChave("atual");
       const b = await carregarChave("anterior");
+      const d = await carregarChave("distribuicaoAtual");
       if (a) setAtual(a);
       if (b) setAnterior(b);
+      if (d) setDistribuicaoAtual(d);
     })();
+  }, []);
+
+  const handleUploadDistribuicao = useCallback((file) => {
+    setLoadingDist(file.name); setErroDist("");
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const rows = parseCSVDistribuicaoAtual(ev.target.result);
+        if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: Estado, Cidade, Transportadora.");
+        const novo = { rows, nome: file.name, data: new Date().toISOString() };
+        await salvarChave("distribuicaoAtual", novo);
+        setDistribuicaoAtual(novo);
+      } catch (e) { setErroDist(e.message || String(e)); } finally { setLoadingDist(""); }
+    };
+    reader.onerror = () => { setErroDist("Erro ao ler o arquivo."); setLoadingDist(""); };
+    reader.readAsText(file);
   }, []);
 
   const handleUpload = useCallback((file) => {
@@ -2541,6 +2639,34 @@ export default function AbrangenciaApp() {
     return lista;
   }, [crescimento, fCresEstado, somenteSemParca]);
 
+  const toggleSortCrescimento = useCallback((key) => {
+    setSortCrescimento(prev => prev.key === key ? { key, dir: prev.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
+  }, []);
+
+  const crescimentoOrdenado = useMemo(() => {
+    const { key, dir } = sortCrescimento;
+    const mult = dir === "asc" ? 1 : -1;
+    return [...crescimentoFiltrado].sort((a, b) => {
+      const va = a[key], vb = b[key];
+      if (typeof va === "string") return va.localeCompare(vb) * mult;
+      return ((va ?? 0) - (vb ?? 0)) * mult;
+    });
+  }, [crescimentoFiltrado, sortCrescimento]);
+
+  // ── Simulação: Share Anual com Distribuição Atual ─────────────────────────
+  const rosterAtual = useMemo(() => {
+    const s = new Set();
+    (distribuicaoAtual?.rows || []).forEach(r => {
+      s.add(`${r.estado}|${normalizarCidade(r.cidade)}|${normalizarCidade(r.transportadora)}`);
+    });
+    return s;
+  }, [distribuicaoAtual]);
+
+  const simulacao = useMemo(() => {
+    if (!atual || !distribuicaoAtual) return null;
+    return calcularSimulacao(atual.rows, rosterAtual);
+  }, [atual, distribuicaoAtual, rosterAtual]);
+
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
   return (
@@ -2589,7 +2715,7 @@ export default function AbrangenciaApp() {
 
           {/* ── Abas ── */}
           <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","📉 Perdas Parça"],["priorizacao","🌱 Onde Priorizar"]].map(([k,l])=>(
+            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","📉 Perdas Parça"],["priorizacao","🌱 Onde Priorizar"],["simulacao","🔮 Simulação"]].map(([k,l])=>(
               <button key={k} onClick={()=>setAba(k)} style={{
                 padding:"8px 16px", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer",
                 border:`1.5px solid ${aba===k?C.laranja:C.cinzaBorda}`,
@@ -3048,21 +3174,21 @@ export default function AbrangenciaApp() {
                         {(fCresEstado!=="Todos"||somenteSemParca) && <button onClick={()=>{setFCresEstado("Todos");setSomenteSemParca(false);}} style={sq()}>Limpar filtros</button>}
                       </div>
 
-                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Ordenado por crescimento capturado por não-Parça</div>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Clique num cabeçalho pra ordenar por ele</div>
                       <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
                         <thead>
                           <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
-                            <th style={{ padding:"4px 6px" }}>Estado</th>
-                            <th style={{ padding:"4px 6px" }}>Cidade</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Total antes</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Total depois</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ Total</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ p/ não-Parça</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>% Parça hoje</th>
+                            <ThOrdenavel label="Estado" sortKey="estado" sortState={sortCrescimento} onSort={toggleSortCrescimento} />
+                            <ThOrdenavel label="Cidade" sortKey="cidade" sortState={sortCrescimento} onSort={toggleSortCrescimento} />
+                            <ThOrdenavel label="Total antes" sortKey="totalAntes" sortState={sortCrescimento} onSort={toggleSortCrescimento} align="right" />
+                            <ThOrdenavel label="Total depois" sortKey="totalDepois" sortState={sortCrescimento} onSort={toggleSortCrescimento} align="right" />
+                            <ThOrdenavel label="Δ Total" sortKey="deltaTotal" sortState={sortCrescimento} onSort={toggleSortCrescimento} align="right" />
+                            <ThOrdenavel label="Δ p/ não-Parça" sortKey="deltaNaoParca" sortState={sortCrescimento} onSort={toggleSortCrescimento} align="right" />
+                            <ThOrdenavel label="% Parça hoje" sortKey="pctParcaAtual" sortState={sortCrescimento} onSort={toggleSortCrescimento} align="right" />
                           </tr>
                         </thead>
                         <tbody>
-                          {crescimentoFiltrado.map((c,i)=>(
+                          {crescimentoOrdenado.map((c,i)=>(
                             <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}`, background: c.semParca ? "#FEF2F2" : "transparent" }}>
                               <td style={{ padding:"4px 6px" }}>{c.estado}</td>
                               <td style={{ padding:"4px 6px", fontWeight:600 }}>{c.cidade}</td>
@@ -3077,6 +3203,103 @@ export default function AbrangenciaApp() {
                                   ? <span style={{ background:"#FEE2E2", color:"#DC2626", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Sem Parça</span>
                                   : `${c.pctParcaAtual===null?"—":c.pctParcaAtual.toFixed(0)+"%"}`}
                               </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ══ SIMULAÇÃO: SHARE ANUAL COM DISTRIBUIÇÃO ATUAL ══ */}
+          {aba==="simulacao" && (
+            <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:12 }}>
+                <div style={{ maxWidth:640 }}>
+                  <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>🔮 Share Anual Simulado com Distribuição Atual</div>
+                  <div style={{ fontSize:13, color:C.cinzaTexto, lineHeight:1.5 }}>
+                    Pega o volume do ano inteiro já importado e recalcula quanto seria Parça se a distribuição de hoje (quem é Parça em cada cidade) já valesse desde o início — credita como Parça o histórico daquela transportadora específica nas cidades onde ela é parceira hoje, mesmo nos meses em que ainda não era.
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <button onClick={baixarModeloDistribuicao}
+                    style={{ padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600, cursor:"pointer", background:"transparent", color:C.texto }}>
+                    ⬇ Baixar modelo (.csv)
+                  </button>
+                  <label style={{ padding:"8px 14px", borderRadius:8, background:C.laranja, color:"#fff", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                    <input type="file" accept=".csv" style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) handleUploadDistribuicao(e.target.files[0]); e.target.value=""; }} />
+                    📍 Importar distribuição atual
+                  </label>
+                </div>
+              </div>
+
+              {loadingDist && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Processando {loadingDist}...</div>}
+              {erroDist && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erroDist}</div>}
+
+              {distribuicaoAtual && (
+                <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:16 }}>
+                  Distribuição atual: <strong>{distribuicaoAtual.nome}</strong> · importada em {new Date(distribuicaoAtual.data).toLocaleString("pt-BR")} · {distribuicaoAtual.rows.length} vínculo(s) cidade↔transportadora mapeado(s)
+                </div>
+              )}
+
+              {!atual ? (
+                <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
+                  Importe primeiro a planilha de abrangência (topo da página) pra ter o volume do ano disponível pra simular.
+                </div>
+              ) : !distribuicaoAtual ? (
+                <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
+                  Importe o arquivo de distribuição atual acima (Estado, Cidade, Transportadora) pra ver a simulação.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:20 }}>
+                    <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20, minWidth:220 }}>
+                      <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>% Parça real do ano</div>
+                      <div style={{ fontSize:32, fontWeight:700, color:C.texto }}>{simulacao.pctReal.toFixed(1)}%</div>
+                      <div style={{ fontSize:11, color:C.cinzaTexto, marginTop:4 }}>{simulacao.parcaReal.toLocaleString("pt-BR")} de {simulacao.totalReal.toLocaleString("pt-BR")} coletas</div>
+                    </div>
+                    <div style={{ background:C.cinzaCard, border:`2px solid ${C.laranja}`, borderRadius:12, padding:20, minWidth:220 }}>
+                      <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>% Parça simulado (distribuição de hoje)</div>
+                      <div style={{ fontSize:32, fontWeight:700, color:C.laranja }}>{simulacao.pctSimulado.toFixed(1)}%</div>
+                      <div style={{ fontSize:11, color:C.cinzaTexto, marginTop:4 }}>{simulacao.parcaSimulado.toLocaleString("pt-BR")} de {simulacao.totalReal.toLocaleString("pt-BR")} coletas</div>
+                    </div>
+                    <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20, minWidth:200, display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                      <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:4 }}>Ganho com a distribuição atual</div>
+                      <div style={{ fontSize:28, fontWeight:700, color:simulacao.deltaPP>0?C.verde:C.cinzaTexto }}>
+                        {simulacao.deltaPP>0?"+":""}{simulacao.deltaPP.toFixed(1)} p.p.
+                      </div>
+                      <div style={{ fontSize:11, color:C.cinzaTexto, marginTop:4 }}>{(simulacao.parcaSimulado-simulacao.parcaReal).toLocaleString("pt-BR")} coletas a mais reclassificadas como Parça</div>
+                    </div>
+                  </div>
+
+                  {simulacao.detalhe.length === 0 ? (
+                    <div style={{ fontSize:13, color:C.cinzaTexto }}>Nenhuma cidade do histórico bateu com a distribuição atual importada (Estado+Cidade+Transportadora) — confira se os nomes de cidade/transportadora estão escritos igual ao arquivo de abrangência.</div>
+                  ) : (
+                    <>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Cidades onde a distribuição atual muda a leitura do histórico</div>
+                      <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
+                        <thead>
+                          <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                            <th style={{ padding:"4px 6px" }}>Estado</th>
+                            <th style={{ padding:"4px 6px" }}>Cidade</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Total do ano</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Parça real</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Parça simulado</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Ganho</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {simulacao.detalhe.map((c,i)=>(
+                            <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                              <td style={{ padding:"4px 6px" }}>{c.estado}</td>
+                              <td style={{ padding:"4px 6px", fontWeight:600 }}>{c.cidade}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{c.total.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{c.parcaReal.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:C.laranja }}>{c.parcaSimulado.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:C.verde }}>+{c.ganhoAbs.toLocaleString("pt-BR")}</td>
                             </tr>
                           ))}
                         </tbody>
