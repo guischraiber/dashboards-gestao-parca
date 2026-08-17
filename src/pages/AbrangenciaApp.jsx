@@ -2159,28 +2159,32 @@ function gerarCSVDownload(rows) {
 }
 
 // ── Distribuição atual (quem é Parça em cada cidade HOJE) ─────────────────────
-// Arquivo simples de 3 colunas — usado pra simular a cobertura anual como se a
-// parceria de hoje já existisse desde o início do ano (ver calcularSimulacao).
+// Arquivo de 4 colunas — lista TODAS as transportadoras de cada cidade (Parça ou
+// não) com uma coluna explícita marcando qual é qual. Usado pra simular a
+// cobertura anual como se a distribuição de hoje já existisse desde o início do
+// ano (ver calcularSimulacao) — só as linhas marcadas Parça entram no roster.
 function parseCSVDistribuicaoAtual(texto) {
   const { data } = Papa.parse(texto, { header: true, skipEmptyLines: true });
   return data
     .map(r => {
       const norm = {};
       Object.entries(r).forEach(([k, v]) => { norm[String(k).trim().toLowerCase()] = v; });
+      const flagParca = String(
+        norm["parça (sim/não)"] ?? norm["parça (sim/nao)"] ?? norm["parca (sim/nao)"] ??
+        norm["é parça"] ?? norm["e parca"] ?? norm["parça"] ?? norm["parca"] ?? ""
+      ).trim().toLowerCase();
       return {
         estado: String(norm["estado"] || "").trim().toUpperCase(),
         cidade: String(norm["cidade"] || "").trim(),
-        transportadora: String(
-          norm["transportadora"] || norm["parça"] || norm["parca"] ||
-          norm["parça/transportadora"] || norm["parca/transportadora"] || ""
-        ).trim(),
+        transportadora: String(norm["transportadora"] || "").trim(),
+        souParca: ["sim", "s", "true", "1", "yes", "parça", "parca"].includes(flagParca),
       };
     })
     .filter(r => r.estado && r.cidade && r.transportadora);
 }
 
 function baixarModeloDistribuicao() {
-  const csv = "Estado,Cidade,Transportadora\nSP,Sao Paulo,Safari Montagem\n";
+  const csv = "Estado,Cidade,Transportadora,Parça (Sim/Não)\nSP,Sao Paulo,Safari Montagem,Sim\nSP,Sao Paulo,Transportadora XYZ,Não\n";
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -2382,7 +2386,7 @@ export default function AbrangenciaApp() {
     reader.onload = async (ev) => {
       try {
         const rows = parseCSVDistribuicaoAtual(ev.target.result);
-        if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: Estado, Cidade, Transportadora.");
+        if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: Estado, Cidade, Transportadora, Parça (Sim/Não).");
         const novo = { rows, nome: file.name, data: new Date().toISOString() };
         await salvarChave("distribuicaoAtual", novo);
         setDistribuicaoAtual(novo);
@@ -2657,7 +2661,7 @@ export default function AbrangenciaApp() {
   const rosterAtual = useMemo(() => {
     const s = new Set();
     (distribuicaoAtual?.rows || []).forEach(r => {
-      s.add(`${r.estado}|${normalizarCidade(r.cidade)}|${normalizarCidade(r.transportadora)}`);
+      if (r.souParca) s.add(`${r.estado}|${normalizarCidade(r.cidade)}|${normalizarCidade(r.transportadora)}`);
     });
     return s;
   }, [distribuicaoAtual]);
@@ -3241,7 +3245,7 @@ export default function AbrangenciaApp() {
 
               {distribuicaoAtual && (
                 <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:16 }}>
-                  Distribuição atual: <strong>{distribuicaoAtual.nome}</strong> · importada em {new Date(distribuicaoAtual.data).toLocaleString("pt-BR")} · {distribuicaoAtual.rows.length} vínculo(s) cidade↔transportadora mapeado(s)
+                  Distribuição atual: <strong>{distribuicaoAtual.nome}</strong> · importada em {new Date(distribuicaoAtual.data).toLocaleString("pt-BR")} · {distribuicaoAtual.rows.length} vínculo(s) cidade↔transportadora mapeado(s), sendo {distribuicaoAtual.rows.filter(r=>r.souParca).length} marcado(s) como Parça
                 </div>
               )}
 
