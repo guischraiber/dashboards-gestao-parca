@@ -2170,6 +2170,83 @@ function Pill({ ativo, onClick, children }) {
   );
 }
 
+// ── Seletor de comparação de período (compartilhado por "Perdas Parça" e "Onde Priorizar") ──
+function SeletorComparacao({ comparisonMode, setComparisonMode, anterior, granularidadePerda, setGranularidadePerda, periodoAEfetivo, periodoBEfetivo, setPeriodoAId, setPeriodoBId, listaPeriodosPerda }) {
+  return (
+    <>
+      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+        <Pill ativo={comparisonMode==="importacoes"} onClick={()=>setComparisonMode("importacoes")}>Importação atual vs. anterior</Pill>
+        <Pill ativo={comparisonMode==="periodos"} onClick={()=>setComparisonMode("periodos")}>Período vs. período</Pill>
+      </div>
+
+      {comparisonMode==="importacoes" && !anterior && (
+        <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto, marginBottom:16 }}>
+          Essa comparação aparece a partir da segunda importação — ela compara a base atual com a anterior.
+        </div>
+      )}
+
+      {comparisonMode==="periodos" && (
+        <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+          <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Granularidade:</span>
+          <Pill ativo={granularidadePerda==="mes"} onClick={()=>{setGranularidadePerda("mes");setPeriodoAId(null);setPeriodoBId(null);}}>Mês</Pill>
+          <Pill ativo={granularidadePerda==="semana"} onClick={()=>{setGranularidadePerda("semana");setPeriodoAId(null);setPeriodoBId(null);}}>Semana</Pill>
+          <div style={{ width:1, height:20, background:C.cinzaBorda }} />
+          <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>De:</span>
+          <select value={periodoAEfetivo ?? ""} onChange={e=>setPeriodoAId(parseInt(e.target.value))}
+            style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
+            {listaPeriodosPerda.map(p=><option key={p} value={p}>{granularidadePerda==="mes"?`Mês ${p}`:`S${p}`}</option>)}
+          </select>
+          <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Para:</span>
+          <select value={periodoBEfetivo ?? ""} onChange={e=>setPeriodoBId(parseInt(e.target.value))}
+            style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
+            {listaPeriodosPerda.map(p=><option key={p} value={p}>{granularidadePerda==="mes"?`Mês ${p}`:`S${p}`}</option>)}
+          </select>
+        </div>
+      )}
+
+      {comparisonMode==="periodos" && periodoAEfetivo!=null && periodoBEfetivo!=null && periodoAEfetivo===periodoBEfetivo && (
+        <div style={{ background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, padding:12, color:"#92400E", fontSize:12, marginBottom:16 }}>
+          ⚠️ Escolha dois períodos diferentes para comparar.
+        </div>
+      )}
+    </>
+  );
+}
+
+// Ranqueia cidades pelo CRESCIMENTO TOTAL de coletas (Parça + não-Parça) entre dois
+// períodos, cruzando com quanto desse crescimento foi capturado por transportadoras
+// não-Parça — isso é a base pra decidir onde priorizar a inclusão de novos parceiros:
+// não basta a cidade estar crescendo, o que importa é o volume que está crescendo
+// SEM Parça (deltaNaoParca), porque uma cidade que cresce mas já é bem coberta pela
+// Parça não é prioridade.
+function calcularCrescimento(rowsAntes, rowsDepois) {
+  const mapA = calcularCoberturaPorCidade(rowsAntes);
+  const mapB = calcularCoberturaPorCidade(rowsDepois);
+  const chaves = new Set([...mapA.keys(), ...mapB.keys()]);
+  const zero = () => ({ abrangenciaTotal: 0, abrangenciaParca: 0 });
+  const resultado = [];
+  chaves.forEach(k => {
+    const a = mapA.get(k) || zero();
+    const b = mapB.get(k) || zero();
+    const ref = mapB.get(k) || mapA.get(k);
+    const deltaTotal = b.abrangenciaTotal - a.abrangenciaTotal;
+    if (deltaTotal <= 0) return; // só interessa quem está crescendo
+    const deltaParca = b.abrangenciaParca - a.abrangenciaParca;
+    const deltaNaoParca = deltaTotal - deltaParca;
+    const pctParcaAtual = b.abrangenciaTotal > 0 ? (b.abrangenciaParca / b.abrangenciaTotal) * 100 : null;
+    const semParca = b.abrangenciaTotal > 0 && b.abrangenciaParca === 0;
+    resultado.push({
+      estado: ref.estado, cidade: ref.cidade,
+      totalAntes: a.abrangenciaTotal, totalDepois: b.abrangenciaTotal, deltaTotal,
+      parcaAntes: a.abrangenciaParca, parcaDepois: b.abrangenciaParca, deltaParca,
+      deltaNaoParca, pctParcaAtual, semParca,
+    });
+  });
+  // Maior volume de crescimento capturado por não-Parça primeiro — é a oportunidade
+  // mais concreta em número de coletas, já descontando o que a própria Parça pegou.
+  return resultado.sort((x, y) => y.deltaNaoParca - x.deltaNaoParca);
+}
+
 // ── Componente principal ───────────────────────────────────────────────────────
 export default function AbrangenciaApp() {
   const [aba,  setAba]  = useState("geral");
@@ -2186,6 +2263,10 @@ export default function AbrangenciaApp() {
   const [periodoAId, setPeriodoAId] = useState(null);
   const [periodoBId, setPeriodoBId] = useState(null);
   const [fPerdaEstado, setFPerdaEstado] = useState("Todos");
+
+  // ── Onde Priorizar (crescimento sem Parça)
+  const [fCresEstado, setFCresEstado] = useState("Todos");
+  const [somenteSemParca, setSomenteSemParca] = useState(false);
 
   // ── Filtros globais de período (usados em Visão Geral e Mapa)
   const [fgValidacao, setFgValidacao] = useState("Todos");
@@ -2441,6 +2522,25 @@ export default function AbrangenciaApp() {
     fPerdaEstado === "Todos" ? perdas : perdas.filter(p => p.estado === fPerdaEstado)
   , [perdas, fPerdaEstado]);
 
+  // ── Onde Priorizar (crescimento sem Parça) — reaproveita o mesmo comparativo de período
+  const crescimento = useMemo(() => comparavelPerda ? calcularCrescimento(perdaRowsA, perdaRowsB) : [], [comparavelPerda, perdaRowsA, perdaRowsB]);
+
+  const kpisCrescimento = useMemo(() => {
+    const totalNaoParcaCrescido = crescimento.reduce((s, c) => s + c.deltaNaoParca, 0);
+    const totalCrescido = crescimento.reduce((s, c) => s + c.deltaTotal, 0);
+    const cidadesSemParca = crescimento.filter(c => c.semParca).length;
+    return { totalNaoParcaCrescido, totalCrescido, cidadesSemParca, cidadesCrescendo: crescimento.length };
+  }, [crescimento]);
+
+  const estadosDisponiveisCrescimento = useMemo(() => [...new Set(crescimento.map(c => c.estado))].sort(), [crescimento]);
+
+  const crescimentoFiltrado = useMemo(() => {
+    let lista = crescimento;
+    if (fCresEstado !== "Todos") lista = lista.filter(c => c.estado === fCresEstado);
+    if (somenteSemParca) lista = lista.filter(c => c.semParca);
+    return lista;
+  }, [crescimento, fCresEstado, somenteSemParca]);
+
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
   return (
@@ -2489,7 +2589,7 @@ export default function AbrangenciaApp() {
 
           {/* ── Abas ── */}
           <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","📉 Perdas Parça"]].map(([k,l])=>(
+            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","📉 Perdas Parça"],["priorizacao","🌱 Onde Priorizar"]].map(([k,l])=>(
               <button key={k} onClick={()=>setAba(k)} style={{
                 padding:"8px 16px", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer",
                 border:`1.5px solid ${aba===k?C.laranja:C.cinzaBorda}`,
@@ -2798,42 +2898,11 @@ export default function AbrangenciaApp() {
                 Compara a abrangência Parça por cidade entre dois momentos e mostra onde a cobertura caiu — olhando só o volume Parça, sem misturar com coletas não-parça.
               </div>
 
-              {/* Seletor de modo */}
-              <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
-                <Pill ativo={comparisonMode==="importacoes"} onClick={()=>setComparisonMode("importacoes")}>Importação atual vs. anterior</Pill>
-                <Pill ativo={comparisonMode==="periodos"} onClick={()=>setComparisonMode("periodos")}>Período vs. período</Pill>
-              </div>
-
-              {comparisonMode==="importacoes" && !anterior && (
-                <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto, marginBottom:16 }}>
-                  Essa comparação aparece a partir da segunda importação — ela compara a base atual com a anterior.
-                </div>
-              )}
-
-              {comparisonMode==="periodos" && (
-                <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Granularidade:</span>
-                  <Pill ativo={granularidadePerda==="mes"} onClick={()=>{setGranularidadePerda("mes");setPeriodoAId(null);setPeriodoBId(null);}}>Mês</Pill>
-                  <Pill ativo={granularidadePerda==="semana"} onClick={()=>{setGranularidadePerda("semana");setPeriodoAId(null);setPeriodoBId(null);}}>Semana</Pill>
-                  <div style={{ width:1, height:20, background:C.cinzaBorda }} />
-                  <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>De:</span>
-                  <select value={periodoAEfetivo ?? ""} onChange={e=>setPeriodoAId(parseInt(e.target.value))}
-                    style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
-                    {listaPeriodosPerda.map(p=><option key={p} value={p}>{granularidadePerda==="mes"?`Mês ${p}`:`S${p}`}</option>)}
-                  </select>
-                  <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Para:</span>
-                  <select value={periodoBEfetivo ?? ""} onChange={e=>setPeriodoBId(parseInt(e.target.value))}
-                    style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
-                    {listaPeriodosPerda.map(p=><option key={p} value={p}>{granularidadePerda==="mes"?`Mês ${p}`:`S${p}`}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {comparisonMode==="periodos" && periodoAEfetivo!=null && periodoBEfetivo!=null && periodoAEfetivo===periodoBEfetivo && (
-                <div style={{ background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, padding:12, color:"#92400E", fontSize:12, marginBottom:16 }}>
-                  ⚠️ Escolha dois períodos diferentes para comparar.
-                </div>
-              )}
+              <SeletorComparacao
+                comparisonMode={comparisonMode} setComparisonMode={setComparisonMode} anterior={anterior}
+                granularidadePerda={granularidadePerda} setGranularidadePerda={setGranularidadePerda}
+                periodoAEfetivo={periodoAEfetivo} periodoBEfetivo={periodoBEfetivo}
+                setPeriodoAId={setPeriodoAId} setPeriodoBId={setPeriodoBId} listaPeriodosPerda={listaPeriodosPerda} />
 
               {comparavelPerda && (
                 <>
@@ -2927,6 +2996,86 @@ export default function AbrangenciaApp() {
                                 {p.status==="perdeu_participacao" && <span style={{ background:"#EDE9FE", color:"#7C3AED", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Perdeu participação</span>}
                                 {p.status==="reduziu_volume" && <span style={{ background:"#FEF3C7", color:"#D97706", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Perdeu volume</span>}
                                 {p.status==="ganhou" && <span style={{ background:"#DCFCE7", color:"#16A34A", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Ganhou</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ══ ONDE PRIORIZAR (crescimento sem Parça) ══ */}
+          {aba==="priorizacao" && (
+            <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
+              <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>🌱 Onde Priorizar Parça</div>
+              <div style={{ fontSize:13, color:C.cinzaTexto, marginBottom:16, lineHeight:1.5 }}>
+                Cidades onde o volume TOTAL de coletas reversas (Parça + não-Parça) cresceu entre dois períodos, ordenadas por quanto desse crescimento foi parar em transportadoras não-Parça. É a leitura mais direta de onde a demanda está aumentando sem uma parceira acompanhando.
+              </div>
+
+              <SeletorComparacao
+                comparisonMode={comparisonMode} setComparisonMode={setComparisonMode} anterior={anterior}
+                granularidadePerda={granularidadePerda} setGranularidadePerda={setGranularidadePerda}
+                periodoAEfetivo={periodoAEfetivo} periodoBEfetivo={periodoBEfetivo}
+                setPeriodoAId={setPeriodoAId} setPeriodoBId={setPeriodoBId} listaPeriodosPerda={listaPeriodosPerda} />
+
+              {comparavelPerda && (
+                <>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:20 }}>
+                    <Kpi label="Cidades em crescimento" valor={kpisCrescimento.cidadesCrescendo.toLocaleString("pt-BR")} />
+                    <Kpi label="Crescimento total (coletas)" valor={`+${kpisCrescimento.totalCrescido.toLocaleString("pt-BR")}`} cor={C.azul} />
+                    <Kpi label="Desse crescimento, foi p/ não-Parça" valor={`+${kpisCrescimento.totalNaoParcaCrescido.toLocaleString("pt-BR")}`} cor={C.vermelho}
+                      sub={kpisCrescimento.totalCrescido>0 ? `${(kpisCrescimento.totalNaoParcaCrescido/kpisCrescimento.totalCrescido*100).toFixed(0)}% do crescimento` : undefined} />
+                    <Kpi label="Cidades crescendo sem nenhuma Parça" valor={kpisCrescimento.cidadesSemParca.toLocaleString("pt-BR")} cor={C.vermelho} />
+                  </div>
+
+                  {crescimento.length === 0 ? (
+                    <div style={{ fontSize:13, color:C.cinzaTexto }}>Nenhuma cidade com crescimento de volume nesse comparativo.</div>
+                  ) : (
+                    <>
+                      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+                        <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Estado:</span>
+                        <select value={fCresEstado} onChange={e=>setFCresEstado(e.target.value)}
+                          style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fCresEstado!=="Todos"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fCresEstado!=="Todos"?C.laranja:C.cinzaTexto }}>
+                          <option value="Todos">Todos os estados</option>
+                          {estadosDisponiveisCrescimento.map(e=><option key={e} value={e}>{e}</option>)}
+                        </select>
+                        <div style={{ width:1, height:20, background:C.cinzaBorda }} />
+                        <Pill ativo={somenteSemParca} onClick={()=>setSomenteSemParca(v=>!v)}>Somente cidades sem nenhuma Parça</Pill>
+                        {(fCresEstado!=="Todos"||somenteSemParca) && <button onClick={()=>{setFCresEstado("Todos");setSomenteSemParca(false);}} style={sq()}>Limpar filtros</button>}
+                      </div>
+
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Ordenado por crescimento capturado por não-Parça</div>
+                      <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
+                        <thead>
+                          <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                            <th style={{ padding:"4px 6px" }}>Estado</th>
+                            <th style={{ padding:"4px 6px" }}>Cidade</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Total antes</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Total depois</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ Total</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ p/ não-Parça</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>% Parça hoje</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {crescimentoFiltrado.map((c,i)=>(
+                            <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}`, background: c.semParca ? "#FEF2F2" : "transparent" }}>
+                              <td style={{ padding:"4px 6px" }}>{c.estado}</td>
+                              <td style={{ padding:"4px 6px", fontWeight:600 }}>{c.cidade}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{c.totalAntes.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{c.totalDepois.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:C.azul }}>+{c.deltaTotal.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:c.deltaNaoParca>0?C.vermelho:C.cinzaTexto }}>
+                                {c.deltaNaoParca>0?"+":""}{c.deltaNaoParca.toLocaleString("pt-BR")}
+                              </td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>
+                                {c.semParca
+                                  ? <span style={{ background:"#FEE2E2", color:"#DC2626", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Sem Parça</span>
+                                  : `${c.pctParcaAtual===null?"—":c.pctParcaAtual.toFixed(0)+"%"}`}
                               </td>
                             </tr>
                           ))}
