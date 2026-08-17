@@ -2093,6 +2093,13 @@ function calcularCoberturaPorCidade(rows) {
   return m;
 }
 
+// Compara cobertura Parça por cidade entre dois períodos, olhando tanto o volume
+// absoluto quanto a PARTICIPAÇÃO (% do total de coletas da cidade que é Parça).
+// Isso importa porque o volume Parça pode ficar igual (ou até crescer) enquanto o
+// total de coletas da cidade cresce mais rápido — nesse caso a Parça não "perdeu
+// coletas", mas perdeu relevância relativa naquela cidade, e isso também é uma
+// perda que vale sinalizar (ex: rede cresceu 2x mas a transportadora Parça não
+// acompanhou o crescimento, então hoje ela cobre uma fatia menor da demanda).
 function compararCobertura(rowsAntes, rowsDepois) {
   const mapA = calcularCoberturaPorCidade(rowsAntes);
   const mapB = calcularCoberturaPorCidade(rowsDepois);
@@ -2106,20 +2113,33 @@ function compararCobertura(rowsAntes, rowsDepois) {
     const deltaParca = b.abrangenciaParca - a.abrangenciaParca;
     const pctAntes = a.abrangenciaTotal > 0 ? (a.abrangenciaParca / a.abrangenciaTotal) * 100 : null;
     const pctDepois = b.abrangenciaTotal > 0 ? (b.abrangenciaParca / b.abrangenciaTotal) * 100 : null;
+    const deltaPct = (pctAntes != null && pctDepois != null) ? (pctDepois - pctAntes) : null;
     let status = "estavel";
     if (a.abrangenciaParca > 0 && b.abrangenciaParca === 0) status = "perdeu_total";
-    else if (deltaParca < 0) status = "reduziu";
+    else if (deltaParca < 0) status = "reduziu_volume";
+    else if (deltaPct != null && deltaPct < 0) status = "perdeu_participacao";
     else if (deltaParca > 0) status = "ganhou";
     resultado.push({
       estado: ref.estado, cidade: ref.cidade,
       parcaAntes: a.abrangenciaParca, parcaDepois: b.abrangenciaParca,
       totalAntes: a.abrangenciaTotal, totalDepois: b.abrangenciaTotal,
-      deltaParca, pctAntes, pctDepois, status,
+      deltaParca, pctAntes, pctDepois, deltaPct, status,
     });
   });
+  // Ordem de prioridade: perdeu tudo > perdeu participação > perdeu volume > ganhou.
+  // Dentro de cada grupo, pior caso primeiro (queda maior de % ou de volume).
+  const rank = (r) => r.status === "perdeu_total" ? 0
+    : r.status === "perdeu_participacao" ? 1
+    : r.status === "reduziu_volume" ? 2
+    : 3;
   return resultado
     .filter(r => r.status !== "estavel")
-    .sort((x, y) => x.deltaParca - y.deltaParca); // maior perda primeiro (delta mais negativo)
+    .sort((x, y) => {
+      const rx = rank(x), ry = rank(y);
+      if (rx !== ry) return rx - ry;
+      if (rx === 1) return (x.deltaPct ?? 0) - (y.deltaPct ?? 0);
+      return x.deltaParca - y.deltaParca;
+    });
 }
 
 function corDoBloco(d) {
@@ -2392,19 +2412,27 @@ export default function AbrangenciaApp() {
     const perdaTotal = perdas.filter(p => p.deltaParca < 0).reduce((s, p) => s + p.deltaParca, 0);
     const ganhoTotal = perdas.filter(p => p.deltaParca > 0).reduce((s, p) => s + p.deltaParca, 0);
     const cidadesPerderamTotal = perdas.filter(p => p.status === "perdeu_total").length;
-    const cidadesReduziram = perdas.filter(p => p.status === "reduziu").length;
-    return { perdaTotal, ganhoTotal, cidadesPerderamTotal, cidadesReduziram, saldo: perdaTotal + ganhoTotal };
+    const cidadesReduziram = perdas.filter(p => p.status === "reduziu_volume").length;
+    const cidadesPerderamParticipacao = perdas.filter(p => p.status === "perdeu_participacao").length;
+    const maiorQuedaParticipacao = perdas
+      .filter(p => p.deltaPct != null && p.deltaPct < 0)
+      .reduce((min, p) => Math.min(min, p.deltaPct), 0);
+    return { perdaTotal, ganhoTotal, cidadesPerderamTotal, cidadesReduziram, cidadesPerderamParticipacao, maiorQuedaParticipacao, saldo: perdaTotal + ganhoTotal };
   }, [perdas]);
 
   const perdaPorEstado = useMemo(() => {
     const m = {};
     perdas.forEach(p => {
-      if (!m[p.estado]) m[p.estado] = { estado: p.estado, deltaParca: 0, cidadesPerdaTotal: 0, cidadesReduziram: 0 };
+      if (!m[p.estado]) m[p.estado] = { estado: p.estado, deltaParca: 0, cidadesPerdaTotal: 0, cidadesReduziram: 0, cidadesPerdaParticipacao: 0 };
       m[p.estado].deltaParca += p.deltaParca;
       if (p.status === "perdeu_total") m[p.estado].cidadesPerdaTotal++;
-      if (p.status === "reduziu") m[p.estado].cidadesReduziram++;
+      if (p.status === "reduziu_volume") m[p.estado].cidadesReduziram++;
+      if (p.status === "perdeu_participacao") m[p.estado].cidadesPerdaParticipacao++;
     });
-    return Object.values(m).sort((a, b) => a.deltaParca - b.deltaParca);
+    // Participação primeiro (como na tabela detalhada), depois volume perdido.
+    return Object.values(m).sort((a, b) =>
+      (b.cidadesPerdaParticipacao - a.cidadesPerdaParticipacao) || (a.deltaParca - b.deltaParca)
+    );
   }, [perdas]);
 
   const estadosDisponiveisPerda = useMemo(() => [...new Set(perdas.map(p => p.estado))].sort(), [perdas]);
@@ -2809,25 +2837,32 @@ export default function AbrangenciaApp() {
 
               {comparavelPerda && (
                 <>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:20 }}>
+                  <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:14, lineHeight:1.5 }}>
+                    "Perdeu participação" = a cidade não perdeu coletas Parça em volume (ou até ganhou), mas o total de coletas da cidade cresceu mais rápido — então a Parça hoje responde por uma fatia menor da demanda ali.
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14, marginBottom:20 }}>
                     <Kpi label="Abrangência Parça perdida" valor={kpisPerda.perdaTotal.toLocaleString("pt-BR")} cor={C.vermelho} />
                     <Kpi label="Cidades que perderam 100%" valor={kpisPerda.cidadesPerderamTotal.toLocaleString("pt-BR")} cor={C.vermelho} />
-                    <Kpi label="Cidades com queda parcial" valor={kpisPerda.cidadesReduziram.toLocaleString("pt-BR")} cor={C.amarelo} />
+                    <Kpi label="Cidades c/ queda de volume" valor={kpisPerda.cidadesReduziram.toLocaleString("pt-BR")} cor={C.amarelo} />
+                    <Kpi label="Cidades c/ queda de participação" valor={kpisPerda.cidadesPerderamParticipacao.toLocaleString("pt-BR")}
+                      sub={kpisPerda.maiorQuedaParticipacao<0 ? `pior caso: ${kpisPerda.maiorQuedaParticipacao.toFixed(1)} p.p.` : undefined}
+                      cor="#7C3AED" />
                     <Kpi label="Saldo líquido Parça" valor={`${kpisPerda.saldo>=0?"+":""}${kpisPerda.saldo.toLocaleString("pt-BR")}`} cor={kpisPerda.saldo>=0?C.verde:C.vermelho} />
                   </div>
 
                   {perdas.length === 0 ? (
-                    <div style={{ fontSize:13, color:C.verde, fontWeight:600 }}>✓ Nenhuma perda de cobertura Parça detectada nesse comparativo.</div>
+                    <div style={{ fontSize:13, color:C.verde, fontWeight:600 }}>✓ Nenhuma perda de cobertura ou participação Parça detectada nesse comparativo.</div>
                   ) : (
                     <>
-                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Por estado (ordenado por maior perda)</div>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Por estado (ordenado por queda de participação, depois por volume)</div>
                       <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse", marginBottom:24 }}>
                         <thead>
                           <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
                             <th style={{ padding:"4px 6px" }}>Estado</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ Parça</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ Parça (volume)</th>
                             <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades c/ perda total</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades c/ queda parcial</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades c/ queda de volume</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades c/ queda de participação</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2839,6 +2874,9 @@ export default function AbrangenciaApp() {
                               </td>
                               <td style={{ padding:"4px 6px", textAlign:"right" }}>{uf.cidadesPerdaTotal}</td>
                               <td style={{ padding:"4px 6px", textAlign:"right" }}>{uf.cidadesReduziram}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", color: uf.cidadesPerdaParticipacao>0 ? "#7C3AED" : C.cinzaTexto, fontWeight: uf.cidadesPerdaParticipacao>0 ? 700 : 400 }}>
+                                {uf.cidadesPerdaParticipacao}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -2854,7 +2892,7 @@ export default function AbrangenciaApp() {
                         {fPerdaEstado!=="Todos" && <button onClick={()=>setFPerdaEstado("Todos")} style={sq()}>Limpar filtros</button>}
                       </div>
 
-                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Detalhamento por cidade</div>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Detalhamento por cidade (participação primeiro)</div>
                       <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
                         <thead>
                           <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
@@ -2862,8 +2900,9 @@ export default function AbrangenciaApp() {
                             <th style={{ padding:"4px 6px" }}>Cidade</th>
                             <th style={{ padding:"4px 6px", textAlign:"right" }}>Parça antes</th>
                             <th style={{ padding:"4px 6px", textAlign:"right" }}>Parça depois</th>
-                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ volume</th>
                             <th style={{ padding:"4px 6px", textAlign:"right" }}>Cobertura % (antes → depois)</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ participação</th>
                             <th style={{ padding:"4px 6px" }}>Status</th>
                           </tr>
                         </thead>
@@ -2880,10 +2919,14 @@ export default function AbrangenciaApp() {
                               <td style={{ padding:"4px 6px", textAlign:"right", color:C.cinzaTexto }}>
                                 {p.pctAntes===null?"—":`${p.pctAntes.toFixed(0)}%`} → {p.pctDepois===null?"—":`${p.pctDepois.toFixed(0)}%`}
                               </td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color: p.deltaPct==null ? C.cinzaTexto : p.deltaPct<0 ? "#7C3AED" : p.deltaPct>0 ? C.verde : C.cinzaTexto }}>
+                                {p.deltaPct==null ? "—" : `${p.deltaPct>0?"+":""}${p.deltaPct.toFixed(1)} p.p.`}
+                              </td>
                               <td style={{ padding:"4px 6px" }}>
-                                {p.status==="perdeu_total" && <span style={{ background:"#FEE2E2", color:"#DC2626", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>Perdeu 100%</span>}
-                                {p.status==="reduziu" && <span style={{ background:"#FEF3C7", color:"#D97706", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>Reduziu</span>}
-                                {p.status==="ganhou" && <span style={{ background:"#DCFCE7", color:"#16A34A", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>Ganhou</span>}
+                                {p.status==="perdeu_total" && <span style={{ background:"#FEE2E2", color:"#DC2626", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Perdeu 100%</span>}
+                                {p.status==="perdeu_participacao" && <span style={{ background:"#EDE9FE", color:"#7C3AED", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Perdeu participação</span>}
+                                {p.status==="reduziu_volume" && <span style={{ background:"#FEF3C7", color:"#D97706", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Perdeu volume</span>}
+                                {p.status==="ganhou" && <span style={{ background:"#DCFCE7", color:"#16A34A", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>Ganhou</span>}
                               </td>
                             </tr>
                           ))}
