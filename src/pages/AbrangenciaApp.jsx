@@ -1878,13 +1878,35 @@ const C = {
 // ── Persistência IndexedDB ────────────────────────────────────────────────────
 const DB_NAME = "abrangenciaParcaDB2";
 const STORE   = "dados";
-function abrirDB() {
+function abrirDBRaw() {
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB_NAME, 1);
-    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onupgradeneeded = () => {
+      if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE);
+    };
     r.onsuccess = () => res(r.result);
     r.onerror   = () => rej(r.error);
   });
+}
+function apagarDB() {
+  return new Promise((res) => {
+    const r = indexedDB.deleteDatabase(DB_NAME);
+    r.onsuccess = () => res();
+    r.onerror   = () => res(); // segue em frente mesmo se não conseguir apagar
+    r.onblocked = () => res(); // não trava esperando outra aba fechar a conexão
+  });
+}
+async function abrirDB() {
+  let db = await abrirDBRaw();
+  if (!db.objectStoreNames.contains(STORE)) {
+    // Banco órfão de uma criação incompleta anterior — sem a gaveta "dados".
+    // Como a versão já está fixada em 1, o navegador nunca mais dispara onupgradeneeded
+    // sozinho, então o único jeito de recuperar é apagar o banco quebrado e recriar do zero.
+    db.close();
+    await apagarDB();
+    db = await abrirDBRaw();
+  }
+  return db;
 }
 async function salvarChave(chave, valor) {
   try {
