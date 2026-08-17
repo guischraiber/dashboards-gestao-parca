@@ -1869,31 +1869,44 @@ const COORD_CIDADES = {
   "PR|Assai":[-23.3697,-50.8459]
 };
 
-
 const C = {
   laranja: "#F97316", verde: "#16A34A", vermelho: "#DC2626", amarelo: "#CA8A04",
   azul: "#2563EB", cinzaFundo: "#F8F7F4", cinzaCard: "#FFFFFF", cinzaBorda: "#E5E3DF",
   cinzaTexto: "#6B7280", texto: "#1C1917",
 };
 
-// ── Persistência dos CSVs importados (atual + anterior) ─────────────────────
-// Antes ficava em IndexedDB local (por navegador) — cada colaborador precisava
-// reimportar a planilha na própria máquina. Agora vem do backend (api/
-// abrangencia.js / api/abrangencia.js (POST)), no mesmo padrão do Score / SLA
-// / CSAT: um import feito por qualquer pessoa passa a valer para todos os
-// colaboradores que acessam o dashboard, em ~1 minuto (tempo do redeploy
-// automático do Vercel) — sem precisar que cada um reimporte a mesma planilha.
-// A promoção atual → anterior (guardar a base anterior antes de sobrescrever)
-// agora acontece no servidor (api/abrangencia.js (POST)), não mais aqui.
-
-// Lê um File como texto puro (mesmo helper usado no Score/SLA/CSAT).
-function lerArquivoComoTexto(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsText(file, "utf-8");
+// ── Persistência IndexedDB ────────────────────────────────────────────────────
+const DB_NAME = "abrangenciaParcaDB2";
+const STORE   = "dados";
+function abrirDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onsuccess = () => res(r.result);
+    r.onerror   = () => rej(r.error);
   });
+}
+async function salvarChave(chave, valor) {
+  try {
+    const db = await abrirDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(valor, chave);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    return true;
+  } catch { return false; }
+}
+async function carregarChave(chave) {
+  try {
+    const db = await abrirDB();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).get(chave);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror   = () => rej(req.error);
+    });
+  } catch { return null; }
 }
 
 // ── Grade esquemática do Brasil ───────────────────────────────────────────────
@@ -1926,7 +1939,7 @@ function semanaISO(dateStr) {
   return Math.ceil(((tmp - yearStart) / 86400000 + 1) / 7);
 }
 
-export function parseCSVAbrangencia(texto) {
+function parseCSVAbrangencia(texto) {
   const { data } = Papa.parse(texto, { header:true, skipEmptyLines:true });
   return data
     .filter(r => r["Logistica Reversa Estado"] && r["Logistica Reversa Cidade"])
@@ -1975,59 +1988,8 @@ export function parseCSVAbrangencia(texto) {
     });
 }
 
-// ── Chave única por linha considerando o período ──────────────────────────────
+// ── Chave única por linha ──────────────────────────────────────────────────────
 function chaveLinha(r) { return `${r.estado}|${normalizarCidade(r.cidade)}|${r.transportadora}`; }
-function chaveLinhaComPeriodo(r) {
-  const s = r.semana ?? "?";
-  const a = r.ano ?? "?";
-  return `${a}|S${s}|${r.estado}|${normalizarCidade(r.cidade)}|${r.transportadora}`;
-}
-
-// ── Detecta retroativos entre duas importações ────────────────────────────────
-// Retroativo = uma semana passada (não a semana mais recente da base atual) que
-// mudou de volume em relação à importação anterior.
-function detectarRetroativos(rowsAnterior, rowsAtual) {
-  // Semana mais recente da base anterior (referência temporal)
-  const semanasAnt = rowsAnterior.map(r => (r.ano ?? 0) * 100 + (r.semana ?? 0)).filter(Boolean);
-  const semanaMaxAnt = semanasAnt.length ? Math.max(...semanasAnt) : 0;
-
-  const mapAnt = new Map(rowsAnterior.map(r => [chaveLinhaComPeriodo(r), r]));
-  const mapAt  = new Map(rowsAtual.map(r => [chaveLinhaComPeriodo(r), r]));
-
-  const retroativos = []; // { chave, antes, depois, delta, pctDelta }
-
-  for (const [chave, rAt] of mapAt) {
-    const periodoKey = (rAt.ano ?? 0) * 100 + (rAt.semana ?? 0);
-    // Só é retroativo se a semana já existia na base anterior (não é semana nova).
-    // Semanas estritamente MAIORES que a mais recente da base anterior são dados
-    // novos normais, não retroativos.
-    if (periodoKey === 0 || periodoKey > semanaMaxAnt) continue;
-
-    const rAnt = mapAnt.get(chave);
-    if (!rAnt) {
-      // Linha nova em semana passada = retroativo de adição
-      retroativos.push({ antes: null, depois: rAt, delta: rAt.abrangencia,
-        pctDelta: null, tipo: "adição" });
-    } else if (rAnt.abrangencia !== rAt.abrangencia) {
-      // Linha existente com volume diferente = retroativo de ajuste
-      const delta = rAt.abrangencia - rAnt.abrangencia;
-      const pctDelta = rAnt.abrangencia > 0 ? Math.abs(delta / rAnt.abrangencia) * 100 : null;
-      retroativos.push({ antes: rAnt, depois: rAt, delta, pctDelta, tipo: "ajuste" });
-    }
-  }
-
-  // Linhas removidas de semanas passadas = retroativo de remoção
-  for (const [chave, rAnt] of mapAnt) {
-    const periodoKey = (rAnt.ano ?? 0) * 100 + (rAnt.semana ?? 0);
-    if (periodoKey === 0 || periodoKey > semanaMaxAnt) continue;
-    if (!mapAt.has(chave)) {
-      retroativos.push({ antes: rAnt, depois: null, delta: -rAnt.abrangencia,
-        pctDelta: null, tipo: "remoção" });
-    }
-  }
-
-  return retroativos;
-}
 
 function compararDatasets(anterior, atual) {
   const mapAnt = new Map(anterior.map(r=>[chaveLinha(r),r]));
@@ -2067,8 +2029,6 @@ function calcularOportunidades(linhas) {
 
   // 2. Para cada cidade, verifica se há alguma transportadora PARÇA
   //    na data mais recente. Se não houver → oportunidade.
-  //    Ex: Brusque tem CONECTA (NÃO PARÇA) em 16/07 → última data é 16/07
-  //    Verifica se LOGME (PARÇA) também fez coleta em 16/07 → não → oportunidade.
   const pc = new Map();
   linhas.forEach(r => {
     const k = `${r.estado}|${normalizarCidade(r.cidade)}`;
@@ -2094,6 +2054,48 @@ function calcularOportunidades(linhas) {
     .filter(c => !c.temParcaNaUltimaData)
     .sort((a, b) => b.abrangencia - a.abrangencia)
     .map(c => ({ ...c, transportadoras: [...c.transportadorasNaUltimaData].join(", ") }));
+}
+
+// ── Cobertura Parça por cidade e comparação entre dois conjuntos de linhas ────
+function calcularCoberturaPorCidade(rows) {
+  const m = new Map();
+  rows.forEach(r => {
+    const k = `${r.estado}|${normalizarCidade(r.cidade)}`;
+    if (!m.has(k)) m.set(k, { estado: r.estado, cidade: r.cidade, abrangenciaTotal: 0, abrangenciaParca: 0 });
+    const c = m.get(k);
+    c.abrangenciaTotal += r.abrangencia;
+    if (r.validacao === "PARÇA") c.abrangenciaParca += r.abrangencia;
+  });
+  return m;
+}
+
+function compararCobertura(rowsAntes, rowsDepois) {
+  const mapA = calcularCoberturaPorCidade(rowsAntes);
+  const mapB = calcularCoberturaPorCidade(rowsDepois);
+  const chaves = new Set([...mapA.keys(), ...mapB.keys()]);
+  const zero = () => ({ abrangenciaTotal: 0, abrangenciaParca: 0 });
+  const resultado = [];
+  chaves.forEach(k => {
+    const a = mapA.get(k) || zero();
+    const b = mapB.get(k) || zero();
+    const ref = mapB.get(k) || mapA.get(k);
+    const deltaParca = b.abrangenciaParca - a.abrangenciaParca;
+    const pctAntes = a.abrangenciaTotal > 0 ? (a.abrangenciaParca / a.abrangenciaTotal) * 100 : null;
+    const pctDepois = b.abrangenciaTotal > 0 ? (b.abrangenciaParca / b.abrangenciaTotal) * 100 : null;
+    let status = "estavel";
+    if (a.abrangenciaParca > 0 && b.abrangenciaParca === 0) status = "perdeu_total";
+    else if (deltaParca < 0) status = "reduziu";
+    else if (deltaParca > 0) status = "ganhou";
+    resultado.push({
+      estado: ref.estado, cidade: ref.cidade,
+      parcaAntes: a.abrangenciaParca, parcaDepois: b.abrangenciaParca,
+      totalAntes: a.abrangenciaTotal, totalDepois: b.abrangenciaTotal,
+      deltaParca, pctAntes, pctDepois, status,
+    });
+  });
+  return resultado
+    .filter(r => r.status !== "estavel")
+    .sort((x, y) => x.deltaParca - y.deltaParca); // maior perda primeiro (delta mais negativo)
 }
 
 function corDoBloco(d) {
@@ -2131,12 +2133,14 @@ export default function AbrangenciaApp() {
   const [anterior, setAnterior] = useState(null);
   const [loading,  setLoading]  = useState("");
   const [erro,     setErro]     = useState("");
-  const [enviandoAbrangencia, setEnviandoAbrangencia] = useState(false);
-  const [erroEnvioAbrangencia, setErroEnvioAbrangencia] = useState("");
-  const [historicoAbrangencia, setHistoricoAbrangencia] = useState([]);
-  const [mostrarHistoricoAbrangencia, setMostrarHistoricoAbrangencia] = useState(true);
-  const [thresholdPct, setThresholdPct] = useState(10);
-  const [expandidosRetro, setExpandidosRetro] = useState(new Set());
+  const [avisoPersist, setAvisoPersist] = useState(false);
+
+  // ── Perdas de Cobertura Parça
+  const [comparisonMode, setComparisonMode] = useState("importacoes"); // "importacoes" | "periodos"
+  const [granularidadePerda, setGranularidadePerda] = useState("mes"); // "mes" | "semana"
+  const [periodoAId, setPeriodoAId] = useState(null);
+  const [periodoBId, setPeriodoBId] = useState(null);
+  const [fPerdaEstado, setFPerdaEstado] = useState("Todos");
 
   // ── Filtros globais de período (usados em Visão Geral e Mapa)
   const [fgValidacao, setFgValidacao] = useState("Todos");
@@ -2155,63 +2159,14 @@ export default function AbrangenciaApp() {
   // ── Evolução
   const [evolGranularidade, setEvolGranularidade] = useState("semana"); // semana | mes
 
-  // Carrega as bases (atual + anterior) do backend (data/abrangenciaAtual.csv
-  // e data/abrangenciaAnterior.csv no GitHub, servidas por api/abrangencia.js)
-  // — importadas por qualquer colaborador, valem para todos, sem depender de
-  // IndexedDB local.
-  const recarregarAbrangenciaDoServidor = useCallback(async () => {
-    try {
-      const r = await fetch("/api/abrangencia");
-      if (!r.ok) return;
-      const data = await r.json();
-      if (data && data.atualCSV) {
-        setAtual({
-          rows: parseCSVAbrangencia(data.atualCSV),
-          nome: data.atualNome,
-          data: data.atualData,
-          csvRaw: data.atualCSV,
-        });
-      }
-      if (data && data.anteriorCSV) {
-        setAnterior({
-          rows: parseCSVAbrangencia(data.anteriorCSV),
-          nome: data.anteriorNome,
-          data: data.anteriorData,
-          csvRaw: data.anteriorCSV,
-        });
-      }
-      setHistoricoAbrangencia(data?.historico || []);
-    } catch (e) {
-      console.warn("Não foi possível carregar a Abrangência do servidor:", e);
-    }
-  }, []);
-
   useEffect(() => {
-    recarregarAbrangenciaDoServidor();
-  }, [recarregarAbrangenciaDoServidor]);
-
-  // Envia o CSV (texto original) pro backend (api/abrangencia.js (POST)) —
-  // os dados passam a ficar salvos no repositório, visíveis pra qualquer
-  // pessoa que acessar o dashboard depois do próximo deploy (~1 minuto). A
-  // promoção atual → anterior é feita pelo próprio endpoint.
-  const enviarAbrangenciaParaServidor = useCallback(async (csvTexto, nomeArquivo) => {
-    setEnviandoAbrangencia(true);
-    setErroEnvioAbrangencia("");
-    try {
-      const r = await fetch("/api/abrangencia", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv: csvTexto, nome: nomeArquivo }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || "Erro desconhecido");
-      await recarregarAbrangenciaDoServidor();
-    } catch (e) {
-      setErroEnvioAbrangencia(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
-    } finally {
-      setEnviandoAbrangencia(false);
-    }
-  }, [recarregarAbrangenciaDoServidor]);
+    (async () => {
+      const a = await carregarChave("atual");
+      const b = await carregarChave("anterior");
+      if (a) setAtual(a);
+      if (b) setAnterior(b);
+    })();
+  }, []);
 
   const handleUpload = useCallback((file) => {
     setLoading(file.name); setErro("");
@@ -2221,17 +2176,17 @@ export default function AbrangenciaApp() {
         const rows = parseCSVAbrangencia(ev.target.result);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: VALIDAÇÃO, Logistica Reversa Transportadora, Logistica Reversa Estado, Logistica Reversa Cidade, Abrangencia.");
         const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:ev.target.result };
-        // Promoção local (só pra feedback imediato na tela, antes do servidor
-        // responder) — o servidor faz a promoção "de verdade" em
-        // api/abrangencia.js (POST) ao salvar o novo arquivo.
-        if (atual) setAnterior(atual);
-        setAtual(novoAtual);
-        enviarAbrangenciaParaServidor(ev.target.result, file.name);
+        // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
+        // independente do estado React (que pode estar desatualizado dentro do closure).
+        const atualSalvo = await carregarChave("atual");
+        if (atualSalvo) { await salvarChave("anterior", atualSalvo); setAnterior(atualSalvo);; }
+        const ok = await salvarChave("atual", novoAtual);
+        setAtual(novoAtual); setAvisoPersist(!ok);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
     };
     reader.onerror = () => { setErro("Erro ao ler o arquivo."); setLoading(""); };
     reader.readAsText(file);
-  }, [atual, enviarAbrangenciaParaServidor]);
+  }, []);
 
   const baixarUltimaImportada = useCallback(() => {
     if (!atual) return;
@@ -2243,42 +2198,6 @@ export default function AbrangenciaApp() {
     URL.revokeObjectURL(url);
   }, [atual]);
 
-  // ── Dados retroativos ──────────────────────────────────────────────────────
-  const retroativos = useMemo(() => {
-    if (!atual || !anterior) return [];
-    return detectarRetroativos(anterior.rows, atual.rows);
-  }, [atual, anterior]);
-
-  // Agrega retroativos por Estado → Semana → Cidade/Transportadora
-  const retroPorEstado = useMemo(() => {
-    const mapa = {};
-    retroativos.forEach(r => {
-      const ref = r.depois || r.antes;
-      const uf = ref.estado;
-      const sem = `${ref.ano ?? "?"}|S${ref.semana ?? "?"}`;
-      if (!mapa[uf]) mapa[uf] = { uf, deltaTotal: 0, semanas: {}, numCidades: new Set(), alerta: false };
-      mapa[uf].deltaTotal += r.delta;
-      if (!mapa[uf].semanas[sem]) mapa[uf].semanas[sem] = { sem, deltaTotal: 0, linhas: [] };
-      mapa[uf].semanas[sem].deltaTotal += r.delta;
-      mapa[uf].semanas[sem].linhas.push(r);
-      mapa[uf].numCidades.add(`${ref.cidade}|${ref.transportadora}`);
-    });
-    // Calcula % variação e marca alertas por estado
-    Object.values(mapa).forEach(uf => {
-      // Volume original do estado na base anterior
-      const volOriginal = anterior.rows
-        .filter(r => r.estado === uf.uf)
-        .reduce((s, r) => s + r.abrangencia, 0);
-      const pctVariacao = volOriginal > 0 ? Math.abs(uf.deltaTotal / volOriginal) * 100 : null;
-      uf.pctVariacao = pctVariacao;
-      uf.alerta = pctVariacao !== null && pctVariacao >= thresholdPct;
-      uf.numCidades = uf.numCidades.size;
-    });
-    return Object.values(mapa).sort((a, b) => Math.abs(b.deltaTotal) - Math.abs(a.deltaTotal));
-  }, [retroativos, anterior, thresholdPct]);
-
-  const numAlertas = useMemo(() => retroPorEstado.filter(r => r.alerta).length, [retroPorEstado]);
-  const totalDeltaRetro = useMemo(() => retroativos.reduce((s, r) => s + r.delta, 0), [retroativos]);
   const estadosDisponiveis = useMemo(() =>
     atual ? [...new Set(atual.rows.map(r=>r.estado))].sort() : [],
   [atual]);
@@ -2410,6 +2329,50 @@ export default function AbrangenciaApp() {
     return [...new Set(base.map(o => o.cidade))].sort();
   }, [oportunidades, fOpEstado]);
 
+  // ── Perdas de Cobertura Parça ────────────────────────────────────────────
+  const listaPeriodosPerda = granularidadePerda === "mes" ? mesesDisponiveis : semanasDisponiveis;
+  const periodoBEfetivo = periodoBId ?? (listaPeriodosPerda.length ? listaPeriodosPerda[listaPeriodosPerda.length - 1] : null);
+  const periodoAEfetivo = periodoAId ?? (listaPeriodosPerda.length > 1 ? listaPeriodosPerda[listaPeriodosPerda.length - 2] : (listaPeriodosPerda[0] ?? null));
+
+  const { perdaRowsA, perdaRowsB, comparavelPerda } = useMemo(() => {
+    if (comparisonMode === "importacoes") {
+      if (!atual || !anterior) return { perdaRowsA: [], perdaRowsB: [], comparavelPerda: false };
+      return { perdaRowsA: anterior.rows, perdaRowsB: atual.rows, comparavelPerda: true };
+    }
+    if (!atual || periodoAEfetivo == null || periodoBEfetivo == null || periodoAEfetivo === periodoBEfetivo) {
+      return { perdaRowsA: [], perdaRowsB: [], comparavelPerda: false };
+    }
+    const filtra = (p) => atual.rows.filter(r => granularidadePerda === "mes" ? r.mes === p : r.semana === p);
+    return { perdaRowsA: filtra(periodoAEfetivo), perdaRowsB: filtra(periodoBEfetivo), comparavelPerda: true };
+  }, [comparisonMode, atual, anterior, periodoAEfetivo, periodoBEfetivo, granularidadePerda]);
+
+  const perdas = useMemo(() => comparavelPerda ? compararCobertura(perdaRowsA, perdaRowsB) : [], [comparavelPerda, perdaRowsA, perdaRowsB]);
+
+  const kpisPerda = useMemo(() => {
+    const perdaTotal = perdas.filter(p => p.deltaParca < 0).reduce((s, p) => s + p.deltaParca, 0);
+    const ganhoTotal = perdas.filter(p => p.deltaParca > 0).reduce((s, p) => s + p.deltaParca, 0);
+    const cidadesPerderamTotal = perdas.filter(p => p.status === "perdeu_total").length;
+    const cidadesReduziram = perdas.filter(p => p.status === "reduziu").length;
+    return { perdaTotal, ganhoTotal, cidadesPerderamTotal, cidadesReduziram, saldo: perdaTotal + ganhoTotal };
+  }, [perdas]);
+
+  const perdaPorEstado = useMemo(() => {
+    const m = {};
+    perdas.forEach(p => {
+      if (!m[p.estado]) m[p.estado] = { estado: p.estado, deltaParca: 0, cidadesPerdaTotal: 0, cidadesReduziram: 0 };
+      m[p.estado].deltaParca += p.deltaParca;
+      if (p.status === "perdeu_total") m[p.estado].cidadesPerdaTotal++;
+      if (p.status === "reduziu") m[p.estado].cidadesReduziram++;
+    });
+    return Object.values(m).sort((a, b) => a.deltaParca - b.deltaParca);
+  }, [perdas]);
+
+  const estadosDisponiveisPerda = useMemo(() => [...new Set(perdas.map(p => p.estado))].sort(), [perdas]);
+
+  const perdasFiltradas = useMemo(() =>
+    fPerdaEstado === "Todos" ? perdas : perdas.filter(p => p.estado === fPerdaEstado)
+  , [perdas, fPerdaEstado]);
+
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
   return (
@@ -2437,70 +2400,13 @@ export default function AbrangenciaApp() {
           </label>
         </div>
       </div>
-      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:6 }}>
+      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:14 }}>
         O modelo pra download é a própria base de logística reversa (mesmo formato de sempre) — baixe, atualize com a abrangência do ano inteiro e reimporte.
-      </div>
-      {enviandoAbrangencia && (
-        <div style={{ fontSize:12, color:C.laranja, fontWeight:600, marginBottom:8 }}>Enviando para o servidor...</div>
-      )}
-      {erroEnvioAbrangencia && (
-        <div style={{ fontSize:12, color:C.vermelho, fontWeight:600, marginBottom:8 }}>⚠️ {erroEnvioAbrangencia}</div>
-      )}
-
-      {/* Histórico de importações — vem do backend, data/historicoAbrangencia.json,
-          mesmo padrão do Score / SLA / CSAT. Limpar só pede confirmação. */}
-      <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, overflow:"hidden", marginBottom:16 }}>
-        <div onClick={() => setMostrarHistoricoAbrangencia(v => !v)} style={{ padding:"14px 20px", borderBottom: mostrarHistoricoAbrangencia ? `1px solid ${C.cinzaBorda}` : "none", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <span style={{ fontSize:12, color:C.cinzaTexto }}>{mostrarHistoricoAbrangencia ? "▾" : "▸"}</span>
-            <div>
-              <div style={{ fontWeight:700, fontSize:14 }}>📜 Histórico de Importações{!mostrarHistoricoAbrangencia && historicoAbrangencia.length > 0 && <span style={{ fontWeight:400, color:C.cinzaTexto }}> ({historicoAbrangencia.length})</span>}</div>
-              <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:2 }}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
-            </div>
-          </div>
-          {historicoAbrangencia.length > 0 && (
-            <button onClick={async (e) => {
-              e.stopPropagation();
-              if (!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
-              try {
-                const r = await fetch("/api/abrangencia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: true }) });
-                const data = await r.json();
-                if (!r.ok) throw new Error(data.error || "Erro desconhecido");
-                setHistoricoAbrangencia([]);
-              } catch (e) {
-                alert(`Não consegui limpar: ${e?.message || e}`);
-              }
-            }} style={{ fontSize:11, color:C.cinzaTexto, background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:6, padding:"4px 12px", cursor:"pointer" }}>🗑️ Limpar histórico</button>
-          )}
-        </div>
-        {!mostrarHistoricoAbrangencia ? null : historicoAbrangencia.length === 0 ? (
-          <div style={{ padding:20, color:C.cinzaTexto, fontSize:13, textAlign:"center" }}>Nenhuma importação registrada ainda.</div>
-        ) : (
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-              <thead>
-                <tr style={{ background:C.cinzaFundo }}>
-                  {["#", "Arquivo", "Data / Hora"].map(h => (
-                    <th key={h} style={{ padding:"8px 14px", textAlign: h==="Arquivo"?"left":"center", fontSize:11, fontWeight:700, color:C.cinzaTexto, textTransform:"uppercase" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[...historicoAbrangencia].reverse().map((h, i) => (
-                  <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
-                    <td style={{ padding:"8px 14px", textAlign:"center", color:C.cinzaTexto }}>{historicoAbrangencia.length - i}</td>
-                    <td style={{ padding:"8px 14px", fontWeight:600 }}>{h.arquivo || "—"}</td>
-                    <td style={{ padding:"8px 14px", textAlign:"center", color:C.cinzaTexto }}>{h.data ? new Date(h.data).toLocaleString("pt-BR") : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
 
       {loading && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Processando {loading}...</div>}
       {erro && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erro}</div>}
+      {avisoPersist && <div style={{ padding:10, background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, color:"#92400E", fontSize:12, marginBottom:12 }}>⚠️ Não consegui salvar neste navegador — será preciso reimportar ao recarregar a página.</div>}
 
       {!atual ? (
         <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
@@ -2515,7 +2421,7 @@ export default function AbrangenciaApp() {
 
           {/* ── Abas ── */}
           <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","⚠️ Retroativos"]].map(([k,l])=>(
+            {[["geral","🏠 Visão Geral"],["mapa","🗺️ Mapa"],["evolucao","📈 Evolução"],["oportunidades","🎯 Oportunidades"],["retroativos","📉 Perdas Parça"]].map(([k,l])=>(
               <button key={k} onClick={()=>setAba(k)} style={{
                 padding:"8px 16px", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer",
                 border:`1.5px solid ${aba===k?C.laranja:C.cinzaBorda}`,
@@ -2816,180 +2722,134 @@ export default function AbrangenciaApp() {
             </div>
           )}
 
-          {/* ══ RETROATIVOS ══ */}
+          {/* ══ PERDAS DE COBERTURA PARÇA ══ */}
           {aba==="retroativos" && (
-            <div>
-              {!anterior ? (
-                <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
-                  A aba de retroativos aparece a partir da segunda importação — ela compara a base atual com a anterior e detecta semanas passadas que mudaram de volume.
+            <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
+              <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>📉 Perdas de Cobertura Parça</div>
+              <div style={{ fontSize:13, color:C.cinzaTexto, marginBottom:16, lineHeight:1.5 }}>
+                Compara a abrangência Parça por cidade entre dois momentos e mostra onde a cobertura caiu — olhando só o volume Parça, sem misturar com coletas não-parça.
+              </div>
+
+              {/* Seletor de modo */}
+              <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+                <Pill ativo={comparisonMode==="importacoes"} onClick={()=>setComparisonMode("importacoes")}>Importação atual vs. anterior</Pill>
+                <Pill ativo={comparisonMode==="periodos"} onClick={()=>setComparisonMode("periodos")}>Período vs. período</Pill>
+              </div>
+
+              {comparisonMode==="importacoes" && !anterior && (
+                <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto, marginBottom:16 }}>
+                  Essa comparação aparece a partir da segunda importação — ela compara a base atual com a anterior.
                 </div>
-              ) : (
+              )}
+
+              {comparisonMode==="periodos" && (
+                <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Granularidade:</span>
+                  <Pill ativo={granularidadePerda==="mes"} onClick={()=>{setGranularidadePerda("mes");setPeriodoAId(null);setPeriodoBId(null);}}>Mês</Pill>
+                  <Pill ativo={granularidadePerda==="semana"} onClick={()=>{setGranularidadePerda("semana");setPeriodoAId(null);setPeriodoBId(null);}}>Semana</Pill>
+                  <div style={{ width:1, height:20, background:C.cinzaBorda }} />
+                  <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>De:</span>
+                  <select value={periodoAEfetivo ?? ""} onChange={e=>setPeriodoAId(parseInt(e.target.value))}
+                    style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
+                    {listaPeriodosPerda.map(p=><option key={p} value={p}>{granularidadePerda==="mes"?`Mês ${p}`:`S${p}`}</option>)}
+                  </select>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Para:</span>
+                  <select value={periodoBEfetivo ?? ""} onChange={e=>setPeriodoBId(parseInt(e.target.value))}
+                    style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
+                    {listaPeriodosPerda.map(p=><option key={p} value={p}>{granularidadePerda==="mes"?`Mês ${p}`:`S${p}`}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {comparisonMode==="periodos" && periodoAEfetivo!=null && periodoBEfetivo!=null && periodoAEfetivo===periodoBEfetivo && (
+                <div style={{ background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, padding:12, color:"#92400E", fontSize:12, marginBottom:16 }}>
+                  ⚠️ Escolha dois períodos diferentes para comparar.
+                </div>
+              )}
+
+              {comparavelPerda && (
                 <>
-                  {/* Banner de alerta */}
-                  {numAlertas > 0 && (
-                    <div style={{ padding:"12px 18px", borderRadius:10, marginBottom:16,
-                      background: numAlertas >= 3 ? "#FEE2E2" : "#FEF3C7",
-                      border: `1.5px solid ${numAlertas >= 3 ? "#DC2626" : "#FBBF24"}`,
-                      display:"flex", alignItems:"center", gap:12 }}>
-                      <span style={{ fontSize:22 }}>{numAlertas >= 3 ? "🔴" : "🟡"}</span>
-                      <div>
-                        <div style={{ fontWeight:700, fontSize:14, color: numAlertas >= 3 ? "#991B1B" : "#92400E" }}>
-                          {numAlertas} estado{numAlertas > 1 ? "s" : ""} com variação retroativa acima do threshold ({thresholdPct}%)
-                        </div>
-                        <div style={{ fontSize:12, color:C.cinzaTexto, marginTop:2 }}>
-                          Delta total da base: <strong>{totalDeltaRetro > 0 ? "+" : ""}{totalDeltaRetro.toLocaleString("pt-BR")}</strong> coletas retroativas.
-                          Verifique se os dados das semanas afetadas são esperados ou indicam problema na extração.
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {retroativos.length === 0 && (
-                    <div style={{ padding:"12px 18px", borderRadius:10, marginBottom:16, background:"#DCFCE7", border:"1.5px solid #16A34A", display:"flex", alignItems:"center", gap:12 }}>
-                      <span style={{ fontSize:22 }}>✅</span>
-                      <div style={{ fontWeight:600, color:"#166534" }}>Nenhum dado retroativo detectado — as semanas anteriores estão idênticas à importação anterior.</div>
-                    </div>
-                  )}
-
-                  {/* KPIs + threshold */}
-                  <div style={{ display:"flex", gap:14, marginBottom:18, flexWrap:"wrap", alignItems:"flex-end" }}>
-                    <div style={{ background:C.cinzaCard, border:`2px solid ${numAlertas>0?(numAlertas>=3?C.vermelho:C.amarelo):C.cinzaBorda}`, borderRadius:12, padding:"14px 20px", minWidth:160 }}>
-                      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:2 }}>Estados com alerta</div>
-                      <div style={{ fontSize:28, fontWeight:700, color:numAlertas>0?(numAlertas>=3?C.vermelho:C.amarelo):C.verde }}>{numAlertas}</div>
-                    </div>
-                    <Kpi label="Ajustes retroativos detectados" valor={retroativos.length.toLocaleString("pt-BR")} />
-                    <Kpi label="Delta total de coletas" valor={`${totalDeltaRetro >= 0 ? "+" : ""}${totalDeltaRetro.toLocaleString("pt-BR")}`}
-                      cor={totalDeltaRetro > 0 ? C.verde : totalDeltaRetro < 0 ? C.vermelho : C.cinzaTexto} />
-
-                    {/* Threshold configurável */}
-                    <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:"14px 20px", minWidth:220 }}>
-                      <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:6 }}>Threshold de alerta (%)</div>
-                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                        <input type="range" min={1} max={50} value={thresholdPct}
-                          onChange={e=>setThresholdPct(Number(e.target.value))}
-                          style={{ flex:1, accentColor:C.laranja }} />
-                        <span style={{ fontWeight:700, fontSize:16, minWidth:36, textAlign:"right" }}>{thresholdPct}%</span>
-                      </div>
-                      <div style={{ fontSize:10, color:C.cinzaTexto, marginTop:4 }}>
-                        Estados com variação acima desse % são marcados como alerta
-                      </div>
-                    </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:20 }}>
+                    <Kpi label="Abrangência Parça perdida" valor={kpisPerda.perdaTotal.toLocaleString("pt-BR")} cor={C.vermelho} />
+                    <Kpi label="Cidades que perderam 100%" valor={kpisPerda.cidadesPerderamTotal.toLocaleString("pt-BR")} cor={C.vermelho} />
+                    <Kpi label="Cidades com queda parcial" valor={kpisPerda.cidadesReduziram.toLocaleString("pt-BR")} cor={C.amarelo} />
+                    <Kpi label="Saldo líquido Parça" valor={`${kpisPerda.saldo>=0?"+":""}${kpisPerda.saldo.toLocaleString("pt-BR")}`} cor={kpisPerda.saldo>=0?C.verde:C.vermelho} />
                   </div>
 
-                  {retroativos.length > 0 && (
-                    <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:20 }}>
-                      <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>Detalhamento por Estado → Semana → Cidade/Transportadora</div>
-                      <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:14 }}>
-                        Clique num estado para ver as semanas afetadas. Clique numa semana para ver as linhas individuais.
-                      </div>
-
-                      {/* Tabela nível 1: por Estado */}
-                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                  {perdas.length === 0 ? (
+                    <div style={{ fontSize:13, color:C.verde, fontWeight:600 }}>✓ Nenhuma perda de cobertura Parça detectada nesse comparativo.</div>
+                  ) : (
+                    <>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Por estado (ordenado por maior perda)</div>
+                      <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse", marginBottom:24 }}>
                         <thead>
-                          <tr style={{ background:C.cinzaFundo, textAlign:"left", color:C.cinzaTexto }}>
-                            <th style={{ padding:"8px 10px", width:28 }} />
-                            <th style={{ padding:"8px 10px" }}>Estado</th>
-                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Semanas afetadas</th>
-                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Cidades/transp.</th>
-                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Δ Coletas</th>
-                            <th style={{ padding:"8px 10px", textAlign:"right" }}>Variação %</th>
-                            <th style={{ padding:"8px 10px" }}>Status</th>
+                          <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                            <th style={{ padding:"4px 6px" }}>Estado</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ Parça</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades c/ perda total</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Cidades c/ queda parcial</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {retroPorEstado.map(uf => {
-                            const aberto = expandidosRetro.has(uf.uf);
-                            const semanas = Object.values(uf.semanas).sort((a,b)=>a.sem.localeCompare(b.sem));
-                            return (
-                              <React.Fragment key={uf.uf}>
-                                {/* Linha do estado */}
-                                <tr onClick={()=>setExpandidosRetro(prev => {
-                                    const n = new Set(prev);
-                                    aberto ? n.delete(uf.uf) : n.add(uf.uf);
-                                    return n;
-                                  })}
-                                  style={{ borderTop:`1px solid ${C.cinzaBorda}`, cursor:"pointer",
-                                    background: uf.alerta ? (uf.pctVariacao >= thresholdPct*2 ? "#FEF2F2" : "#FFFBEB") : "transparent" }}>
-                                  <td style={{ padding:"8px 10px", color:C.cinzaTexto }}>{aberto ? "▾" : "▸"}</td>
-                                  <td style={{ padding:"8px 10px", fontWeight:700 }}>
-                                    {uf.alerta && "⚠️ "}{uf.uf}
-                                  </td>
-                                  <td style={{ padding:"8px 10px", textAlign:"right" }}>{Object.keys(uf.semanas).length}</td>
-                                  <td style={{ padding:"8px 10px", textAlign:"right" }}>{uf.numCidades}</td>
-                                  <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600,
-                                    color: uf.deltaTotal > 0 ? C.verde : uf.deltaTotal < 0 ? C.vermelho : C.cinzaTexto }}>
-                                    {uf.deltaTotal > 0 ? "+" : ""}{uf.deltaTotal.toLocaleString("pt-BR")}
-                                  </td>
-                                  <td style={{ padding:"8px 10px", textAlign:"right" }}>
-                                    {uf.pctVariacao !== null ? `${uf.pctVariacao.toFixed(1)}%` : "—"}
-                                  </td>
-                                  <td style={{ padding:"8px 10px" }}>
-                                    {uf.alerta
-                                      ? <span style={{ background: uf.pctVariacao >= thresholdPct*2 ? "#DC2626" : "#D97706", color:"#fff", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>
-                                          {uf.pctVariacao >= thresholdPct*2 ? "CRÍTICO" : "ALERTA"}
-                                        </span>
-                                      : <span style={{ background:"#DCFCE7", color:"#166534", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>OK</span>
-                                    }
-                                  </td>
-                                </tr>
-
-                                {/* Nível 2: por Semana */}
-                                {aberto && semanas.map(sem => {
-                                  const chSem = `${uf.uf}|${sem.sem}`;
-                                  const abertoSem = expandidosRetro.has(chSem);
-                                  return (
-                                    <React.Fragment key={chSem}>
-                                      <tr onClick={()=>setExpandidosRetro(prev => {
-                                          const n = new Set(prev); abertoSem ? n.delete(chSem) : n.add(chSem); return n;
-                                        })}
-                                        style={{ borderTop:`1px solid ${C.cinzaBorda}`, cursor:"pointer", background:"#F8F7F4" }}>
-                                        <td />
-                                        <td style={{ padding:"6px 10px 6px 28px", color:C.cinzaTexto }}>{abertoSem ? "▾" : "▸"}</td>
-                                        <td style={{ padding:"6px 10px", fontWeight:600 }} colSpan={2}>
-                                          {sem.sem.replace("|", " · ")} — {sem.linhas.length} linha(s)
-                                        </td>
-                                        <td style={{ padding:"6px 10px", textAlign:"right", fontWeight:600,
-                                          color: sem.deltaTotal > 0 ? C.verde : sem.deltaTotal < 0 ? C.vermelho : C.cinzaTexto }}>
-                                          {sem.deltaTotal > 0 ? "+" : ""}{sem.deltaTotal.toLocaleString("pt-BR")}
-                                        </td>
-                                        <td colSpan={2} />
-                                      </tr>
-
-                                      {/* Nível 3: por Cidade/Transportadora */}
-                                      {abertoSem && sem.linhas.map((linha, li) => {
-                                        const ref = linha.depois || linha.antes;
-                                        return (
-                                          <tr key={li} style={{ borderTop:`1px solid ${C.cinzaBorda}`, background:"#fff" }}>
-                                            <td colSpan={2} />
-                                            <td style={{ padding:"5px 10px 5px 44px", fontSize:12 }}>{ref.cidade}</td>
-                                            <td style={{ padding:"5px 10px", fontSize:12 }}>{ref.transportadora}</td>
-                                            <td style={{ padding:"5px 10px", textAlign:"right", fontSize:12, fontWeight:600,
-                                              color: linha.delta > 0 ? C.verde : linha.delta < 0 ? C.vermelho : C.cinzaTexto }}>
-                                              {linha.antes ? `${linha.antes.abrangencia} → ${linha.depois?.abrangencia ?? 0}` : `+ ${linha.depois.abrangencia}`}
-                                              {" "}({linha.delta > 0 ? "+" : ""}{linha.delta})
-                                            </td>
-                                            <td style={{ padding:"5px 10px", fontSize:11, color:C.cinzaTexto }}>
-                                              {linha.tipo}
-                                            </td>
-                                            <td style={{ padding:"5px 10px", fontSize:11 }}>
-                                              {linha.pctDelta !== null && linha.pctDelta >= thresholdPct &&
-                                                <span style={{ background:"#FEF3C7", color:"#92400E", borderRadius:4, padding:"1px 6px", fontWeight:600 }}>
-                                                  {linha.pctDelta.toFixed(0)}%
-                                                </span>
-                                              }
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </React.Fragment>
-                                  );
-                                })}
-                              </React.Fragment>
-                            );
-                          })}
+                          {perdaPorEstado.map(uf=>(
+                            <tr key={uf.estado} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                              <td style={{ padding:"4px 6px", fontWeight:600 }}>{uf.estado}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:uf.deltaParca<0?C.vermelho:uf.deltaParca>0?C.verde:C.cinzaTexto }}>
+                                {uf.deltaParca>0?"+":""}{uf.deltaParca.toLocaleString("pt-BR")}
+                              </td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{uf.cidadesPerdaTotal}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{uf.cidadesReduziram}</td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
-                    </div>
+
+                      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+                        <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Estado:</span>
+                        <select value={fPerdaEstado} onChange={e=>setFPerdaEstado(e.target.value)}
+                          style={{ padding:"5px 10px", borderRadius:6, border:`1.5px solid ${fPerdaEstado!=="Todos"?C.laranja:C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:fPerdaEstado!=="Todos"?C.laranja:C.cinzaTexto }}>
+                          <option value="Todos">Todos os estados</option>
+                          {estadosDisponiveisPerda.map(e=><option key={e} value={e}>{e}</option>)}
+                        </select>
+                        {fPerdaEstado!=="Todos" && <button onClick={()=>setFPerdaEstado("Todos")} style={sq()}>Limpar filtros</button>}
+                      </div>
+
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Detalhamento por cidade</div>
+                      <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
+                        <thead>
+                          <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                            <th style={{ padding:"4px 6px" }}>Estado</th>
+                            <th style={{ padding:"4px 6px" }}>Cidade</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Parça antes</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Parça depois</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Δ</th>
+                            <th style={{ padding:"4px 6px", textAlign:"right" }}>Cobertura % (antes → depois)</th>
+                            <th style={{ padding:"4px 6px" }}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {perdasFiltradas.map((p,i)=>(
+                            <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                              <td style={{ padding:"4px 6px" }}>{p.estado}</td>
+                              <td style={{ padding:"4px 6px" }}>{p.cidade}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{p.parcaAntes.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right" }}>{p.parcaDepois.toLocaleString("pt-BR")}</td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", fontWeight:700, color:p.deltaParca<0?C.vermelho:p.deltaParca>0?C.verde:C.cinzaTexto }}>
+                                {p.deltaParca>0?"+":""}{p.deltaParca.toLocaleString("pt-BR")}
+                              </td>
+                              <td style={{ padding:"4px 6px", textAlign:"right", color:C.cinzaTexto }}>
+                                {p.pctAntes===null?"—":`${p.pctAntes.toFixed(0)}%`} → {p.pctDepois===null?"—":`${p.pctDepois.toFixed(0)}%`}
+                              </td>
+                              <td style={{ padding:"4px 6px" }}>
+                                {p.status==="perdeu_total" && <span style={{ background:"#FEE2E2", color:"#DC2626", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>Perdeu 100%</span>}
+                                {p.status==="reduziu" && <span style={{ background:"#FEF3C7", color:"#D97706", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>Reduziu</span>}
+                                {p.status==="ganhou" && <span style={{ background:"#DCFCE7", color:"#16A34A", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:600 }}>Ganhou</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
                   )}
                 </>
               )}
@@ -3222,7 +3082,7 @@ function TabelaSimples({ titulo, linhas }) {
               <td style={{ padding:"4px 6px" }}>{r.cidade}</td>
               <td style={{ padding:"4px 6px" }}>{r.transportadora}</td>
               <td style={{ padding:"4px 6px", color:r.validacao==="PARÇA"?C.verde:C.vermelho, fontWeight:600 }}>{r.validacao}</td>
-              <td style={{ padding:"4px 6px", textAlign:"right" }}>{r.abrangencia}</td>
+              <td style={{ padding:"4px 6px" }}>{r.abrangencia}</td>
             </tr>
           ))}
         </tbody>
