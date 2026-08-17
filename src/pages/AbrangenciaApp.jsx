@@ -1894,8 +1894,10 @@ async function salvarChave(chave, valor) {
       tx.objectStore(STORE).put(valor, chave);
       tx.oncomplete = res; tx.onerror = () => rej(tx.error);
     });
-    return true;
-  } catch { return false; }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, erro: e?.name ? `${e.name}${e.message ? ": " + e.message : ""}` : String(e) };
+  }
 }
 async function carregarChave(chave) {
   try {
@@ -2134,6 +2136,7 @@ export default function AbrangenciaApp() {
   const [loading,  setLoading]  = useState("");
   const [erro,     setErro]     = useState("");
   const [avisoPersist, setAvisoPersist] = useState(false);
+  const [avisoPersistDetalhe, setAvisoPersistDetalhe] = useState("");
 
   // ── Perdas de Cobertura Parça
   const [comparisonMode, setComparisonMode] = useState("importacoes"); // "importacoes" | "periodos"
@@ -2169,7 +2172,7 @@ export default function AbrangenciaApp() {
   }, []);
 
   const handleUpload = useCallback((file) => {
-    setLoading(file.name); setErro("");
+    setLoading(file.name); setErro(""); setAvisoPersist(false); setAvisoPersistDetalhe("");
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
@@ -2179,9 +2182,24 @@ export default function AbrangenciaApp() {
         // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
         // independente do estado React (que pode estar desatualizado dentro do closure).
         const atualSalvo = await carregarChave("atual");
-        if (atualSalvo) { await salvarChave("anterior", atualSalvo); setAnterior(atualSalvo);; }
-        const ok = await salvarChave("atual", novoAtual);
-        setAtual(novoAtual); setAvisoPersist(!ok);
+        if (atualSalvo) { await salvarChave("anterior", atualSalvo); setAnterior(atualSalvo); }
+
+        let resultado = await salvarChave("atual", novoAtual);
+        if (!resultado.ok) {
+          // Provável estouro de cota do navegador — tenta de novo sem a cópia bruta do CSV
+          // (o botão "Baixar última importada" cai no fallback gerarCSVDownload(rows) nesse caso).
+          const { csvRaw, ...semCsvRaw } = novoAtual;
+          resultado = await salvarChave("atual", semCsvRaw);
+          if (resultado.ok) {
+            setAvisoPersist(true);
+            setAvisoPersistDetalhe("Salvo, mas sem a cópia do CSV original — espaço limitado neste navegador. O botão \"Baixar última importada\" vai gerar uma versão reconstruída (mesmas colunas de sempre) em vez do arquivo exato importado.");
+          }
+        }
+        if (!resultado.ok) {
+          setAvisoPersist(true);
+          setAvisoPersistDetalhe(`Não consegui salvar neste navegador (${resultado.erro || "motivo desconhecido"}) — será preciso reimportar ao recarregar a página.`);
+        }
+        setAtual(novoAtual);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
     };
     reader.onerror = () => { setErro("Erro ao ler o arquivo."); setLoading(""); };
@@ -2406,7 +2424,7 @@ export default function AbrangenciaApp() {
 
       {loading && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Processando {loading}...</div>}
       {erro && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erro}</div>}
-      {avisoPersist && <div style={{ padding:10, background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, color:"#92400E", fontSize:12, marginBottom:12 }}>⚠️ Não consegui salvar neste navegador — será preciso reimportar ao recarregar a página.</div>}
+      {avisoPersist && <div style={{ padding:10, background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, color:"#92400E", fontSize:12, marginBottom:12 }}>⚠️ {avisoPersistDetalhe || "Não consegui salvar neste navegador — será preciso reimportar ao recarregar a página."}</div>}
 
       {!atual ? (
         <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:12, padding:40, textAlign:"center", color:C.cinzaTexto }}>
