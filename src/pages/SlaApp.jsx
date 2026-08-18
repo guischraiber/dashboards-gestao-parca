@@ -33,7 +33,7 @@ const FAIXAS_AGING = [
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const norm = s => {
   if(s==null) return "";
-  return String(s).normalize("NFD").replace(/[̀-ͯ]/g,"").trim();
+  return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
 };
 const pct = (n,t) => t>0 ? Math.round(n/t*10000)/100 : null;
 const avg = arr => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length*100)/100 : null;
@@ -43,113 +43,26 @@ const sem = (v, meta, inv) => {
   return v<=meta?C.verde:v<=meta*1.15?C.amarelo:C.vermelho;
 };
 
-// ── IndexedDB — CSV bruto importado ─────────────────────────────────────────
-// O CSV completo (rawRows) alimenta as visões de Mês/Trimestre/Ano. Antes ele
-// só existia em memória durante a sessão — ao recarregar a página, sumia, e
-// essas visões ficavam em branco (a de Semana continuava OK porque usa um
-// cache separado, já calculado). Guardamos aqui em IndexedDB (não localStorage,
-// porque o CSV completo costuma passar dos ~5MB que o localStorage aguenta).
-const SLA_DB_NAME = "slaParcaDB";
-const SLA_STORE = "csvBruto";
-
-function abrirSlaDB() {
-  return new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) { reject(new Error("IndexedDB indisponível neste navegador")); return; }
-    const req = indexedDB.open(SLA_DB_NAME, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(SLA_STORE); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function carregarRawRowsSalvo() {
-  try {
-    const db = await abrirSlaDB();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readonly");
-      const req = tx.objectStore(SLA_STORE).get("atual");
-      req.onsuccess = () => resolve(req.result || null); // { rows, nome }
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function salvarRawRowsAtual(rows, nome) {
-  try {
-    const db = await abrirSlaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readwrite");
-      tx.objectStore(SLA_STORE).put({ rows, nome }, "atual");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return true;
-  } catch (e) {
-    console.warn("Não foi possível salvar o CSV bruto localmente:", e);
-    return false;
-  }
-}
-
-async function limparRawRowsSalvo() {
-  try {
-    const db = await abrirSlaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readwrite");
-      tx.objectStore(SLA_STORE).delete("atual");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
-}
-
-// Mesma ideia acima, mas para os dados da aba "Coleta x Recebimento" — reaproveita
-// o mesmo banco/store, só numa chave diferente ("coletaRecebimento").
-async function carregarFatRowsSalvo() {
-  try {
-    const db = await abrirSlaDB();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readonly");
-      const req = tx.objectStore(SLA_STORE).get("coletaRecebimento");
-      req.onsuccess = () => resolve(req.result || null); // { rows, nome }
-      req.onerror = () => reject(req.error);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function salvarFatRowsAtual(rows, nome) {
-  try {
-    const db = await abrirSlaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readwrite");
-      tx.objectStore(SLA_STORE).put({ rows, nome }, "coletaRecebimento");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    return true;
-  } catch (e) {
-    console.warn("Não foi possível salvar a planilha de Coleta x Recebimento localmente:", e);
-    return false;
-  }
-}
-
-async function limparFatRowsSalvo() {
-  try {
-    const db = await abrirSlaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(SLA_STORE, "readwrite");
-      tx.objectStore(SLA_STORE).delete("coletaRecebimento");
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
-}
+// ── CSV bruto importado — persistência ──────────────────────────────────────
+// O CSV completo (rawRows) alimenta a Semana e as abas de detalhe (Cidades,
+// Problemas, Atrasos, Relatórios). Os INDICADORES agregados de Mês/Trimestre/
+// Ano (KPIs, Painel, Evolução, Histórico, Aging Elevado) não dependem dele —
+// usam um cache separado (monthlyExtra/pdMonthlyExtra, em localStorage),
+// calculado no momento da importação, no mesmo padrão que já existia para a
+// Semana (weeklyExtra/pdExtra).
+//
+// Nem o CSV bruto principal nem o de "Coleta x Recebimento" usam mais
+// IndexedDB local — os dados de ambos agora vêm do backend (um único
+// endpoint por base: GET lê, POST com {csv,nome} importa, POST com {admin}
+// limpa o histórico — api/sla.js e api/coletaRecebimento.js,
+// respectivamente), no mesmo padrão do Score: um import feito por qualquer
+// pessoa passa a valer para todos os colaboradores, sem precisar reimportar
+// por navegador. O CSV do SLA usa a variante "grande" desses endpoints (Git
+// Data API/blobs) porque acumula histórico e pode passar do limite de ~1MB
+// da Contents API simples.
 
 // ── CSV Parser ─────────────────────────────────────────────────────────────────
-const parseCSV = (text) => {
+export const parseCSV = (text) => {
   const sep = text.split("\n")[0].includes(";") ? ";" : ",";
   // Parser que lida com campos multilinhas (texto com \n dentro de aspas)
   const rows = [];
@@ -212,10 +125,10 @@ const busdays = (d1Str, d2Str) => {
 
 // ── Exceções de prazo do SLA Reversa ────────────────────────────────────────
 // Normalmente o SLA Reversa lê a coluna "Vencido" pronta do CSV (prazo padrão
-// definido na origem). Aqui registramos exceções pontuais — semana + parceiro
-// com prazo diferente — recalculadas a partir das datas reais (dias úteis),
-// ignorando a coluna "Vencido" só para essas linhas. Não afeta o Aging Médio,
-// que continua sempre com o cálculo normal de dias úteis corridos.
+// definido na origem, ~10 dias úteis). Aqui registramos exceções pontuais —
+// semana + parceiro com prazo diferente — recalculadas a partir das datas
+// reais (dias úteis), ignorando a coluna "Vencido" só para essas linhas. Não
+// afeta o Aging Médio, que continua sempre com o cálculo normal de dias úteis.
 const EXCECOES_PRAZO_SLA = [
   { semana: 33, transportadora: "SAFARI MONTAGEM", prazoDias: 15 },
 ];
@@ -892,52 +805,97 @@ const AbaRelatorios = ({rawRows,weeklyMerged,pdMerged,monthlyData,parceirosDisp,
     </div>}
   </div>;
 };
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Componente AbaFaturamentoColeta — análise de Coleta x Recebimento
 // Lê a base "Faturamentos Analítico" (Parceiro Nome, Data Coleta, Data de
 // Recebimento da Coleta, entre outras) e mostra em quantos dias úteis a coleta
 // foi recebida depois de realizada, com filtro por período e por parça.
 // ══════════════════════════════════════════════════════════════════════════════
+// Lê um File como texto puro (mesmo helper usado no ImportView do Score).
+function lerArquivoComoTextoFat(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+export function parseCsvColetaRecebimento(texto) {
+  const resultado = Papa.parse(texto, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: h => (h || "").trim(),
+    transform: v => (v == null ? "" : String(v).trim()),
+  });
+  return resultado.data;
+}
+
 const AbaFaturamentoColeta = ({
   parseCSVFn, busdays_r,
   rows, setRows, nome, setNome,
   periodoIni, setPeriodoIni, periodoFim, setPeriodoFim,
   parceiroSel, setParceiroSel,
   diasCorridos, setDiasCorridos,
+  onImportado,
 }) => {
   const [loading, setLoading] = useState("");
   const [erroUpload, setErroUpload] = useState("");
-  const [avisoPersistencia, setAvisoPersistencia] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [resultadoImport, setResultadoImport] = useState(null);
 
-  const carregar = (file) => {
+  // Envia a planilha para o backend (api/coletaRecebimento.js (POST)) — os
+  // dados passam a ficar salvos no repositório, visíveis para qualquer pessoa
+  // que acessar o dashboard depois do próximo deploy (~1 minuto), e não mais
+  // só no navegador de quem importou.
+  const carregar = async (file) => {
     setLoading(file.name);
     setErroUpload("");
-    setAvisoPersistencia(false);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      worker: false,
-      transformHeader: h => (h || "").trim(),
-      transform: v => (v == null ? "" : String(v).trim()),
-      complete: (results) => {
-        if (results.errors && results.errors.length > 0) {
-          console.warn("Avisos ao ler CSV:", results.errors.slice(0, 5));
-        }
-        setRows(results.data);
-        setNome(file.name);
-        setLoading("");
-        salvarFatRowsAtual(results.data, file.name).then(ok => setAvisoPersistencia(!ok));
-      },
-      error: (err) => {
-        setErroUpload(`Não consegui processar este arquivo: ${err?.message || err}`);
-        setLoading("");
-      },
-    });
+    setResultadoImport(null);
+    try {
+      const texto = await lerArquivoComoTextoFat(file);
+      const dados = parseCsvColetaRecebimento(texto);
+      // Mostra o resultado localmente na hora, sem esperar o redeploy —
+      // quem importou já vê a análise; os demais colaboradores veem depois
+      // do próximo deploy do Vercel, quando abrirem a página.
+      setRows(dados);
+      setNome(file.name);
+      setLoading("");
+      setEnviando(true);
+      // Mesmo tratamento do envio do SLA: comprime antes de mandar, pra não
+      // esbarrar no limite de ~4.5MB de corpo de requisição do Vercel.
+      const csvGzip = await comprimirTextoParaServidor(texto);
+      const r = await fetch("/api/coletaRecebimento", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csvGzip, nome: file.name }),
+      });
+      let data;
+      try {
+        data = await r.json();
+      } catch {
+        throw new Error(
+          r.status === 413
+            ? "Arquivo grande demais para o servidor mesmo comprimido (limite do Vercel)."
+            : `Resposta inesperada do servidor (status ${r.status}).`
+        );
+      }
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+      setResultadoImport({ ok: true, mensagem: data.mensagem });
+      // Atualiza o histórico de importações (Configurações) para refletir o
+      // novo registro salvo no servidor.
+      if (onImportado) onImportado();
+    } catch (e) {
+      setErroUpload(`Não consegui importar: ${e?.message || e}`);
+    } finally {
+      setLoading("");
+      setEnviando(false);
+    }
   };
 
-  const limparSalvo = () => {
-    if (!window.confirm("Remover esta planilha? Você vai precisar reimportar para ver os dados de novo.")) return;
-    limparFatRowsSalvo();
+  const limparView = () => {
+    if (!window.confirm("Isso só limpa a visualização local. A planilha continua salva para todos — para removê-la de vez, importe uma planilha vazia ou uma nova planilha por cima.")) return;
     setRows([]);
     setNome("");
   };
@@ -1016,21 +974,25 @@ const AbaFaturamentoColeta = ({
   return (
     <div style={{marginTop:28}}>
       <div style={{fontWeight:700, fontSize:15, marginBottom:2}}>📦 Coleta x Recebimento ({unidadePl})</div>
-      <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:10}}>A última planilha importada aqui fica salva neste navegador — não precisa reimportar toda vez que abrir a página.</div>
+      <div style={{fontSize:11, color:C.cinzaTexto, marginBottom:10}}>A planilha importada aqui fica salva no servidor — vale para todos os colaboradores que acessam o dashboard, sem precisar reimportar por navegador.</div>
 
       <div style={{display:"flex", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:16}}>
-        <label style={{cursor:"pointer", padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
-          <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])carregar(e.target.files[0]);e.target.value="";}}/>
-          📂 Importar planilha (Faturamentos Analítico)
+        {/* Desabilitado enquanto o envio anterior ainda está em andamento —
+            evita duas importações comprometendo o mesmo commit no GitHub ao
+            mesmo tempo (causa mais comum do "Update is not a fast forward"). */}
+        <label style={{cursor:enviando?"not-allowed":"pointer", opacity:enviando?0.6:1, padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600}}>
+          <input type="file" accept=".csv" disabled={enviando} style={{display:"none"}} onChange={e=>{if(e.target.files[0])carregar(e.target.files[0]);e.target.value="";}}/>
+          {enviando ? "⏳ Enviando..." : "📂 Importar planilha (Faturamentos Analítico)"}
         </label>
         {nome && <span style={{fontSize:12, color:C.cinzaTexto}}>Arquivo: <strong>{nome}</strong> ({rows.length} linhas)</span>}
-        {nome && <button onClick={limparSalvo}
+        {nome && <button onClick={limparView}
           style={{fontSize:11, color:C.cinzaTexto, background:"transparent", border:`1px solid ${C.cinzaBorda}`, borderRadius:6, padding:"4px 10px", cursor:"pointer"}}>
           🗑️ Remover
         </button>}
-        {avisoPersistencia && <span style={{fontSize:11, color:C.amarelo, fontWeight:600}}>⚠️ Não consegui salvar neste navegador — ao recarregar a página, será preciso reimportar.</span>}
-        {loading && <span style={{fontSize:12, color:C.laranja}}>Processando {loading}...</span>}
+        {loading && <span style={{fontSize:12, color:C.laranja}}>Lendo {loading}...</span>}
+        {enviando && <span style={{fontSize:12, color:C.laranja}}>Enviando para o servidor...</span>}
         {erroUpload && <span style={{fontSize:12, color:C.vermelho, fontWeight:600}}>⚠️ {erroUpload}</span>}
+        {resultadoImport?.ok && <span style={{fontSize:12, color:C.verde, fontWeight:600}}>✅ {resultadoImport.mensagem}</span>}
       </div>
 
       {rows.length>0 && <>
@@ -1137,6 +1099,20 @@ function bytesParaBinaryString(bytes) {
   }
   return binary;
 }
+// Comprime um texto grande (CSV bruto) antes de mandar pro backend, pra não
+// estourar o limite de ~4.5MB de corpo de requisição das Serverless Functions
+// do Vercel. Mesmo mecanismo (CompressionStream "deflate") já usado abaixo
+// pros links compartilháveis — aqui em base64 padrão (não url-safe), porque
+// vai dentro de um JSON, não de uma URL.
+async function comprimirTextoParaServidor(texto) {
+  const bytes = new TextEncoder().encode(texto);
+  const cs = new CompressionStream("deflate");
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const compressed = await new Response(cs.readable).arrayBuffer();
+  return btoa(bytesParaBinaryString(new Uint8Array(compressed)));
+}
 async function encodeDataSla(data) {
   const json = JSON.stringify(data, (_, v) => arredondarParaLink(v));
   const bytes = new TextEncoder().encode(json);
@@ -1189,13 +1165,26 @@ export default function SlaApp() {
   const [rawRows,        setRawRows]        = useState([]);
   const [weeklyExtra,    setWeeklyExtra]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_weekly");return s?JSON.parse(s):[];}catch{return [];} });
   const [pdExtra,        setPdExtra]        = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd");    return s?JSON.parse(s):{};}catch{return {};} });
+  // Cache mensal (mesmo padrão da Semana) — calculado no momento da importação
+  // do CSV, guardado em localStorage. Alimenta as visões de Mês/Trimestre/Ano
+  // (KPIs, Painel por Parceiro, Evolução, Histórico, Aging Elevado) sem
+  // depender do CSV bruto no IndexedDB. As abas de detalhe por pedido
+  // (Cidades, Problemas, Atrasos, Relatórios, Coleta x Recebimento) continuam
+  // precisando do CSV bruto, porque mostram informação que não cabe num
+  // indicador agregado.
+  const [monthlyExtra,   setMonthlyExtra]   = useState(()=>{ try{const s=localStorage.getItem("slaParca_monthly"); return s?JSON.parse(s):[];}catch{return [];} });
+  const [pdMonthlyExtra, setPdMonthlyExtra] = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd_mensal");return s?JSON.parse(s):{};}catch{return {};} });
   const [copiedLink,     setCopiedLink]     = useState(false); // false | "loading" | "done" | "manual"
   const [linkGerado,     setLinkGerado]     = useState(null);
   const [linkAviso,      setLinkAviso]      = useState("");
   const [fromURL,        setFromURL]        = useState(false);
   const [uploadHistory,  setUploadHistory]  = useState(()=>{ try{const s=localStorage.getItem("slaParca_hist"); return s?JSON.parse(s):[];}catch{return [];} });
+  const [mostrarUploadHistory, setMostrarUploadHistory] = useState(true);
   const [variacaoVol,    setVariacaoVol]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_var");  return s?JSON.parse(s):[];}catch{return [];} });
-  const [avisoPersistenciaCSV, setAvisoPersistenciaCSV] = useState(false);
+  const [enviandoSla,     setEnviandoSla]     = useState(false); // enviando o CSV bruto pro backend (api/sla.js, POST)
+  const [erroEnvioSla,    setErroEnvioSla]    = useState("");
+  const [historicoSla,    setHistoricoSla]    = useState([]); // histórico de importações do CSV bruto (vem do backend)
+  const [mostrarHistoricoSla, setMostrarHistoricoSla] = useState(true);
 
   const [csvStatus,   setCsvStatus]   = useState("idle"); // idle | processando | ok | erro
   const [csvNome,     setCsvNome]     = useState("");
@@ -1213,6 +1202,8 @@ export default function SlaApp() {
   const [fatPeriodoFim, setFatPeriodoFim] = useState("");
   const [fatParceiro, setFatParceiro] = useState("Todos");
   const [fatDiasCorridos, setFatDiasCorridos] = useState(false); // false = dias úteis (padrão), true = dias corridos
+  const [historicoFat, setHistoricoFat] = useState([]); // histórico de importações de Coleta x Recebimento (vem do backend)
+  const [mostrarHistoricoFat, setMostrarHistoricoFat] = useState(true);
   const [csvResumo,   setCsvResumo]   = useState({novas:[],retroativas:[],variacoes:[]});
 
   const [abaGlobal,   setAbaGlobal]   = useState("geral");
@@ -1239,30 +1230,52 @@ export default function SlaApp() {
   const [compA,          setCompA]          = useState(null);
   const [compB,          setCompB]          = useState(null);
 
-  // Restaurar o CSV bruto salvo (necessário pras visões de Mês/Trimestre/Ano,
-  // que dependem dele — diferente da Semana, que usa o cache já calculado).
-  useEffect(() => {
-    (async () => {
-      const salvo = await carregarRawRowsSalvo();
-      if (salvo && salvo.rows && salvo.rows.length) {
-        setRawRows(salvo.rows);
-        setCsvNome(salvo.nome || "");
+  // Carregar o CSV bruto principal do backend (data/slaBruto.csv no GitHub,
+  // servido por api/sla.js) — usado pela Semana e pelas abas de detalhe
+  // (Cidades, Problemas, Atrasos, Relatórios). Mês/Trimestre/Ano não dependem
+  // disso (usam o cache separado monthlyExtra/pdMonthlyExtra). Também
+  // reaproveitada depois de um novo import, para atualizar o histórico.
+  const recarregarSlaDoServidor = useCallback(async () => {
+    try {
+      const r = await fetch("/api/sla");
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data && data.csv) {
+        const rows = parseCSV(data.csv);
+        setRawRows(rows);
+        setCsvNome(data.nome || "");
         setCsvStatus("ok");
       }
-    })();
+      setHistoricoSla(data?.historico || []);
+    } catch (e) {
+      console.warn("Não foi possível carregar o CSV do SLA do servidor:", e);
+    }
   }, []);
 
-  // Restaurar a última planilha importada na aba "Coleta x Recebimento", igual
-  // já é feito para o CSV principal acima.
-  useEffect(() => {
-    (async () => {
-      const salvo = await carregarFatRowsSalvo();
-      if (salvo && salvo.rows && salvo.rows.length) {
-        setFatRows(salvo.rows);
-        setFatNome(salvo.nome || "");
+  useEffect(() => { recarregarSlaDoServidor(); }, [recarregarSlaDoServidor]);
+
+  // Carregar a planilha de "Coleta x Recebimento" do backend (data/coletaRecebimento.csv
+  // no GitHub, servido por api/coletaRecebimento.js) — importada por qualquer
+  // colaborador, vale para todos, sem depender de IndexedDB local. Também
+  // reaproveitada depois de um novo import (para atualizar o histórico) e pelo
+  // botão "🔄 Verificar atualização" da Configurações.
+  const recarregarColetaRecebimento = useCallback(async () => {
+    try {
+      const r = await fetch("/api/coletaRecebimento");
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data && data.csv) {
+        const dados = parseCsvColetaRecebimento(data.csv);
+        setFatRows(dados);
+        setFatNome(data.nome || "");
       }
-    })();
+      setHistoricoFat(data?.historico || []);
+    } catch (e) {
+      console.warn("Não foi possível carregar Coleta x Recebimento do servidor:", e);
+    }
   }, []);
+
+  useEffect(() => { recarregarColetaRecebimento(); }, [recarregarColetaRecebimento]);
 
   // Carregar dados de um link compartilhado (?d=...) — mescla com o que já
   // está salvo neste navegador, igual ao CSAT.
@@ -1352,7 +1365,6 @@ export default function SlaApp() {
 
   // ── WEEKLY e PD merged ─────────────────────────────────────────────────────
   const WEEKLY_MERGED = useMemo(()=>{
-    const extraSet = new Set(weeklyExtra.map(w=>w.s));
     // sem hardcoded — tudo vem do CSV/localStorage
     return [...weeklyExtra].sort((a,b)=>a.s-b.s);
   },[weeklyExtra]);
@@ -1361,29 +1373,23 @@ export default function SlaApp() {
 
   const ALL_SEMANAS = useMemo(()=>WEEKLY_MERGED.map(w=>w.s),[WEEKLY_MERGED]);
 
-  const monthlyData = useMemo(()=>{
-    if(!rawRows.length) return [];
-    const map={};
-    rawRows.filter(r=>r["Flag Situacao Coleta"]==="Coletado").forEach(r=>{
-      const m=parseInt(r["Mês_Efetivada"]); if(!m||m<1||m>12) return;
-      if(!map[m]) map[m]={m,rows:[]};
-      map[m].rows.push(r);
-    });
-    return Object.values(map).map(({m,rows})=>{
-      const d=calcSemana(rows); return d?{m,...d}:null;
-    }).filter(Boolean).sort((a,b)=>a.m-b.m);
-  },[rawRows]);
+  // ── monthlyData ────────────────────────────────────────────────────────────
+  // Antes recalculava sempre a partir de rawRows (CSV bruto no IndexedDB) — se
+  // o IndexedDB fosse limpo, ficava em branco. Agora lê do cache mensal
+  // (monthlyExtra), populado no momento da importação, igual à Semana.
+  const monthlyData = useMemo(()=>[...monthlyExtra].sort((a,b)=>a.m-b.m),[monthlyExtra]);
 
   const ALL_MESES = useMemo(()=>monthlyData.map(d=>d.m),[monthlyData]);
 
   // ── PARCEIROS dinâmico ─────────────────────────────────────────────────────
   const PARCEIROS = useMemo(()=>{
     const doPD  = Object.keys(PD_MERGED);
+    const doPDMensal = Object.keys(pdMonthlyExtra);
     const doCSV = rawRows.length>0
       ? [...new Set(rawRows.filter(r=>r["Transportadora"]).map(r=>r["Transportadora"]).filter(Boolean))]
       : [];
-    return [...new Set([...doPD,...doCSV])].sort();
-  },[PD_MERGED,rawRows]);
+    return [...new Set([...doPD,...doPDMensal,...doCSV])].sort();
+  },[PD_MERGED,pdMonthlyExtra,rawRows]);
 
   // Auto-selecionar todos ao carregar
   useEffect(()=>{
@@ -1405,20 +1411,13 @@ export default function SlaApp() {
     return rows.filter(r=>String(r["Ano_Efetivada"]).trim()==="2026");
   },[granular,semanasSel,mesesSel,trimestresSel]);
 
-  // ── getRaw ─────────────────────────────────────────────────────────────────
-  // Cálculo por mês, independente do filtro geral (granular) — usado tanto
-  // quando o filtro está em "Mês" quanto internamente pelo "Trimestre" (que
-  // precisa somar 3 meses). Antes o Trimestre chamava getRaw recursivamente,
-  // que reolhava pro filtro geral (ainda "trim") e tratava o número do mês
-  // como se fosse outro trimestre — no T1 isso causava um loop infinito,
-  // porque o mês 1 também é uma chave válida de trimestre.
-  const getRawMes = useCallback((p,mes)=>{
-    const d=monthlyData.find(m=>m.m===mes);
-    if(!d) return null;
-    if(!rawRows.length) return null;
-    const rows=rawRows.filter(r=>r["Transportadora"]===p&&parseInt(r["Mês_Efetivada"])===mes&&r["Flag Situacao Coleta"]==="Coletado");
-    return rows.length>=3?calcSemana(rows):null;
-  },[monthlyData,rawRows]);
+  // ── getRawMes ──────────────────────────────────────────────────────────────
+  // Antes recalculava do CSV bruto (rawRows) a cada chamada — dependia dele
+  // estar presente. Agora lê direto do cache mensal por parceiro
+  // (pdMonthlyExtra), populado no import, no mesmo padrão do PD_MERGED da
+  // Semana. Trimestre e Ano (abaixo) continuam funcionando sem mudança, porque
+  // já dependiam só de getRawMes/monthlyData.
+  const getRawMes = useCallback((p,mes)=> pdMonthlyExtra[p]?.[mes] ?? null,[pdMonthlyExtra]);
 
   const getRaw = useCallback((p,periodo)=>{
     if(granular==="semana") return PD_MERGED[p]?.[periodo];
@@ -1510,6 +1509,50 @@ export default function SlaApp() {
   },[parceiros,granular,ALL_SEMANAS,ALL_MESES,semanasSel,mesesSel,getRaw,semFiltro,lbl]);
 
   // ── CSV Processing ─────────────────────────────────────────────────────────
+  // Envia o CSV bruto (texto original, não as linhas já parseadas) pro backend
+  // (api/sla.js (POST)) — os dados passam a ficar salvos no repositório,
+  // visíveis pra qualquer pessoa que acessar o dashboard depois do próximo
+  // deploy (~1 minuto), e não mais só no navegador de quem importou. Roda em
+  // paralelo ao processamento local (que já mostra o resultado na hora pra
+  // quem importou, sem esperar o backend).
+  const enviarSlaParaServidor = async (texto, nomeArquivo) => {
+    setEnviandoSla(true);
+    setErroEnvioSla("");
+    try {
+      // Manda comprimido (deflate + base64) em vez do texto puro — um CSV de
+      // milhares de linhas facilmente passa do limite de ~4.5MB de corpo de
+      // requisição do Vercel; comprimido, cabe tranquilo na grande maioria
+      // dos casos.
+      const csvGzip = await comprimirTextoParaServidor(texto);
+      const r = await fetch("/api/sla", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csvGzip, nome: nomeArquivo }),
+      });
+      let data;
+      try {
+        data = await r.json();
+      } catch {
+        // O Vercel corta a requisição antes de chegar no handler quando o
+        // corpo é grande demais e devolve texto puro (não JSON) — sem esse
+        // tratamento, o .json() acima quebra com uma mensagem confusa
+        // ("Unexpected token..."). Mesmo comprimido, um arquivo muito maior
+        // ainda pode estourar o limite; aqui pelo menos o aviso fica claro.
+        throw new Error(
+          r.status === 413
+            ? "Arquivo grande demais para o servidor mesmo comprimido (limite do Vercel). Continua salvo só no seu navegador."
+            : `Resposta inesperada do servidor (status ${r.status}).`
+        );
+      }
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+      setHistoricoSla(prev => [...prev, { data: new Date().toISOString(), arquivo: nomeArquivo }]);
+    } catch (e) {
+      setErroEnvioSla(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
+    } finally {
+      setEnviandoSla(false);
+    }
+  };
+
   const handleCSV = (file, forcar=forcarUltimaSemana) => {
     setCsvStatus("processando"); setCsvNome(file.name);
     const reader=new FileReader();
@@ -1517,7 +1560,7 @@ export default function SlaApp() {
       try{
         const rows=parseCSV(ev.target.result);
         setRawRows(rows);
-        salvarRawRowsAtual(rows, file.name).then(ok => setAvisoPersistenciaCSV(!ok));
+        enviarSlaParaServidor(ev.target.result, file.name);
 
         // Semanas válidas do CSV
         const coletado=rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
@@ -1528,7 +1571,12 @@ export default function SlaApp() {
         // de fato fechada (sem nenhuma linha da semana posterior ainda).
         const semanasProc = forcar ? semanasRaw : semanasRaw.slice(0,-1);
 
-        if(!semanasProc.length){ setCsvStatus("ok"); return; }
+        // Meses válidos do CSV — diferente da Semana, não existe conceito de
+        // "mês em aberto" aqui (o dashboard já não tinha essa exclusão antes
+        // desta mudança), então processamos todos os meses com dado suficiente.
+        const mesesRaw=[...new Set(coletado.map(r=>parseInt(r["Mês_Efetivada"])).filter(n=>!isNaN(n)&&n>=1&&n<=12))].sort((a,b)=>a-b);
+
+        if(!semanasProc.length && !mesesRaw.length){ setCsvStatus("ok"); return; }
 
         // Parceiros do CSV (local, não do state)
         const parcsCSV=[...new Set(coletado.map(r=>r["Transportadora"]).filter(Boolean))].sort();
@@ -1554,6 +1602,23 @@ export default function SlaApp() {
           return merged;
         });
 
+        // Calcular todos os meses (mesmo padrão da semana acima) — é isto que
+        // faz Mês/Trimestre/Ano sobreviverem sem o CSV bruto depois.
+        setMonthlyExtra(prev=>{
+          const calculadasM=[];
+          mesesRaw.forEach(m=>{
+            const rowsM=coletado.filter(r=>parseInt(r["Mês_Efetivada"])===m);
+            const d=calcSemana(rowsM); if(!d) return;
+            calculadasM.push({m,...d});
+          });
+          const merged=[
+            ...prev.filter(x=>!calculadasM.find(n=>n.m===x.m)),
+            ...calculadasM
+          ].sort((a,b)=>a.m-b.m);
+          try{localStorage.setItem("slaParca_monthly",JSON.stringify(merged));}catch{}
+          return merged;
+        });
+
         // Por parceiro — capturar snapshot anterior para calcular variações
         let pdSnapshot = {};
         setPdExtra(prev=>{
@@ -1570,6 +1635,23 @@ export default function SlaApp() {
             });
           });
           try{localStorage.setItem("slaParca_pd",JSON.stringify(merged));}catch{}
+          return merged;
+        });
+
+        // Por parceiro e mês (mesmo padrão acima, cache mensal por parceiro)
+        setPdMonthlyExtra(prev=>{
+          const merged={...prev};
+          parcsCSV.forEach(p=>{
+            const rowsP=coletado.filter(r=>r["Transportadora"]===p);
+            mesesRaw.forEach(m=>{
+              const rowsPM=rowsP.filter(r=>parseInt(r["Mês_Efetivada"])===m);
+              if(rowsPM.length<3) return;
+              const d=calcSemana(rowsPM); if(!d) return;
+              if(!merged[p]) merged[p]={};
+              merged[p][m]=d;
+            });
+          });
+          try{localStorage.setItem("slaParca_pd_mensal",JSON.stringify(merged));}catch{}
           return merged;
         });
 
@@ -1615,7 +1697,7 @@ export default function SlaApp() {
 
         // Auto-selecionar última semana
         const ultimaSem=semanasProc[semanasProc.length-1];
-        setSemanasSel([ultimaSem]);
+        if(ultimaSem!=null) setSemanasSel([ultimaSem]);
         setParceiros(parcsCSV);
 
         setCsvStatus("ok");
@@ -1624,6 +1706,7 @@ export default function SlaApp() {
     };
     reader.readAsText(file);
   };
+
 
   // ── Exportar CSV ───────────────────────────────────────────────────────────
   const escCSV=v=>{const s=String(v??"");return s.includes(";")||s.includes('"')?`"${s.replace(/"/g,'""')}"`:s;};
@@ -1710,9 +1793,11 @@ export default function SlaApp() {
         <input type="checkbox" checked={forcarUltimaSemana} onChange={e=>setForcarUltimaSemana(e.target.checked)} />
         Processar semana em aberto
       </label>
-      <label style={{...pill(false),cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
-        <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
-        📂 Carregar CSV
+      {/* Desabilitado enquanto o envio anterior pro servidor ainda está em
+          andamento — mesmo motivo do Coleta x Recebimento acima. */}
+      <label style={{...pill(false),cursor:enviandoSla?"not-allowed":"pointer",opacity:enviandoSla?0.6:1,display:"flex",alignItems:"center",gap:5}}>
+        <input type="file" accept=".csv" disabled={enviandoSla} style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
+        {enviandoSla ? "⏳ Enviando..." : "📂 Carregar CSV"}
       </label>
       {weeklyExtra.length>0 && <button onClick={exportLinkSla} disabled={copiedLink==="loading"} style={{...pill(copiedLink==="done"),cursor:copiedLink==="loading"?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5}}>
         {copiedLink==="loading" ? "⏳ Gerando..." : copiedLink==="done" ? "✓ Link copiado!" : copiedLink==="manual" ? "📋 Copie o link abaixo" : "🔗 Compartilhar link"}
@@ -2130,6 +2215,7 @@ export default function SlaApp() {
         )}
       </div>}
 
+
       {/* ══ ATRASOS ══ */}
       {abaGlobal==="atrasos"&&(rawRows.length===0
         ?<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:32,textAlign:"center",color:C.cinzaTexto}}>
@@ -2161,6 +2247,7 @@ export default function SlaApp() {
           periodoFim={fatPeriodoFim} setPeriodoFim={setFatPeriodoFim}
           parceiroSel={fatParceiro} setParceiroSel={setFatParceiro}
           diasCorridos={fatDiasCorridos} setDiasCorridos={setFatDiasCorridos}
+          onImportado={recarregarColetaRecebimento}
         />
       }
 
@@ -2280,18 +2367,111 @@ export default function SlaApp() {
           <button onClick={()=>{if(!window.confirm("Limpar cache de semanas? Os dados serão recalculados no próximo upload.")) return;try{localStorage.removeItem("slaParca_weekly");localStorage.removeItem("slaParca_pd");}catch{}setWeeklyExtra([]);setPdExtra({});}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar cache</button>
         </div>}
 
-        {/* CSV bruto atual — usado pelas visões de Mês/Trimestre/Ano */}
+        {/* Cache de meses — mesmo padrão do cache de semanas acima. Alimenta as
+            visões de Mês/Trimestre/Ano (KPIs, Painel, Evolução, Histórico,
+            Aging Elevado) sem depender do CSV bruto. */}
+        {monthlyExtra.length>0&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14}}>💾 Cache de Meses</div>
+            <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Meses salvos: <strong>{monthlyExtra.map(m=>MESES_NOME[m.m]).join(", ")}</strong> — usado pelas visões de Mês/Trimestre/Ano</div>
+          </div>
+          <button onClick={()=>{if(!window.confirm("Limpar cache de meses? Os indicadores de Mês/Trimestre/Ano ficam em branco até o próximo upload.")) return;try{localStorage.removeItem("slaParca_monthly");localStorage.removeItem("slaParca_pd_mensal");}catch{}setMonthlyExtra([]);setPdMonthlyExtra({});}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar cache</button>
+        </div>}
+
+        {/* CSV bruto atual — salvo no servidor (data/slaBruto.csv), usado pela
+            Semana e pelas abas de detalhe por pedido (Cidades, Problemas,
+            Atrasos, Relatórios). Mês/Trimestre/Ano usam o cache acima. */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontWeight:700,fontSize:14}}>🗄️ CSV Bruto Atual</div>
             <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>
               {rawRows.length>0
-                ? <>Usado nas visões de Mês/Trimestre/Ano: <strong>{csvNome||"—"}</strong> ({rawRows.length.toLocaleString()} linhas)</>
-                : "Nenhum CSV salvo ainda — Mês/Trimestre/Ano ficam em branco até você importar um."}
+                ? <>Salvo no servidor — vale para todos os colaboradores. Usado na Semana e nas abas Cidades, Problemas, Atrasos e Relatórios: <strong>{csvNome||"—"}</strong> ({rawRows.length.toLocaleString()} linhas)</>
+                : "Nenhum CSV importado ainda — necessário para Semana, Cidades, Problemas, Atrasos e Relatórios. Os indicadores de Mês/Trimestre/Ano (Visão Geral, Painel, Evolução, Aging Elevado) já ficam salvos em cache acima e continuam funcionando mesmo sem este CSV."}
             </div>
-            {avisoPersistenciaCSV&&<div style={{fontSize:11,color:C.amarelo,marginTop:4,fontWeight:600}}>⚠️ Não consegui salvar neste navegador — ao recarregar a página, será preciso reimportar.</div>}
+            {enviandoSla&&<div style={{fontSize:11,color:C.laranja,marginTop:4,fontWeight:600}}>Enviando para o servidor...</div>}
+            {erroEnvioSla&&<div style={{fontSize:11,color:C.vermelho,marginTop:4,fontWeight:600}}>⚠️ {erroEnvioSla}</div>}
           </div>
-          {rawRows.length>0&&<button onClick={()=>{if(!window.confirm("Apagar o CSV bruto salvo? Semana continua funcionando (usa o cache separado), mas Mês/Trimestre/Ano ficam em branco até você reimportar.")) return;limparRawRowsSalvo();setRawRows([]);setCsvNome("");setCsvStatus("idle");}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar</button>}
+          {rawRows.length>0&&<button onClick={()=>{if(!window.confirm("Isso só limpa a visualização local. O CSV continua salvo no servidor para todos — para removê-lo de vez, importe um CSV vazio ou um novo CSV por cima.")) return;setRawRows([]);setCsvNome("");setCsvStatus("idle");}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Remover da visualização</button>}
+        </div>
+
+        {/* Histórico de importações — CSV bruto do SLA (vem do backend,
+            data/historicoSla.json, mesmo padrão do Score / Coleta x
+            Recebimento). Limpar só pede confirmação. */}
+        <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
+          <div onClick={()=>setMostrarHistoricoSla(v=>!v)} style={{padding:"14px 20px",borderBottom: mostrarHistoricoSla ? `1px solid ${C.cinzaBorda}` : "none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarHistoricoSla?"▾":"▸"}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — CSV Bruto (SLA){!mostrarHistoricoSla && historicoSla.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({historicoSla.length})</span>}</div>
+                <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+              </div>
+            </div>
+            {historicoSla.length>0&&<button onClick={async(e)=>{
+              e.stopPropagation();
+              if(!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
+              try{
+                const r = await fetch("/api/sla",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:true})});
+                const data = await r.json();
+                if(!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+                setHistoricoSla([]);
+              }catch(e){
+                alert(`Não consegui limpar: ${e?.message||e}`);
+              }
+            }} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar histórico</button>}
+          </div>
+          {!mostrarHistoricoSla ? null : historicoSla.length===0
+            ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhum CSV importado ainda.</div>
+            :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+              <tbody>{[...historicoSla].reverse().map((h,i)=>(
+                <tr key={i} style={{borderTop:`1px solid ${C.cinzaBorda}`}}>
+                  <td style={{padding:"8px 14px",textAlign:"center",color:C.cinzaTexto}}>{historicoSla.length-i}</td>
+                  <td style={{padding:"8px 14px",fontWeight:600}}>{h.arquivo||"—"}</td>
+                  <td style={{padding:"8px 14px",textAlign:"center",color:C.cinzaTexto}}>{h.data?new Date(h.data).toLocaleString("pt-BR"):"—"}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>}
+        </div>
+
+        {/* Histórico de importações — Coleta x Recebimento (vem do backend,
+            data/historicoColetaRecebimento.json, mesmo padrão do Score).
+            Limpar só pede confirmação no navegador, já que é uma operação
+            destrutiva que afeta o que todos os colaboradores veem. */}
+        <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
+          <div onClick={()=>setMostrarHistoricoFat(v=>!v)} style={{padding:"14px 20px",borderBottom: mostrarHistoricoFat ? `1px solid ${C.cinzaBorda}` : "none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarHistoricoFat?"▾":"▸"}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:14}}>📜 Histórico de Importações — Coleta x Recebimento{!mostrarHistoricoFat && historicoFat.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({historicoFat.length})</span>}</div>
+                <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Salvo no servidor — vale para todos os colaboradores, não só para este navegador.</div>
+              </div>
+            </div>
+            {historicoFat.length>0&&<button onClick={async(e)=>{
+              e.stopPropagation();
+              if(!window.confirm("Tem certeza que quer limpar o histórico de importações? Essa ação não pode ser desfeita.")) return;
+              try{
+                const r = await fetch("/api/coletaRecebimento",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({admin:true})});
+                const data = await r.json();
+                if(!r.ok) throw new Error(data.detail ? `${data.error || "Erro desconhecido"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+                setHistoricoFat([]);
+              }catch(e){
+                alert(`Não consegui limpar: ${e?.message||e}`);
+              }
+            }} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar histórico</button>}
+          </div>
+          {!mostrarHistoricoFat ? null : historicoFat.length===0
+            ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhuma planilha importada ainda.</div>
+            :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+              <tbody>{[...historicoFat].reverse().map((h,i)=>(
+                <tr key={i} style={{borderTop:`1px solid ${C.cinzaBorda}`}}>
+                  <td style={{padding:"8px 14px",textAlign:"center",color:C.cinzaTexto}}>{historicoFat.length-i}</td>
+                  <td style={{padding:"8px 14px",fontWeight:600}}>{h.arquivo||"—"}</td>
+                  <td style={{padding:"8px 14px",textAlign:"center",color:C.cinzaTexto}}>{h.data?new Date(h.data).toLocaleString("pt-BR"):"—"}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>}
         </div>
 
         {/* Variações de volume */}
@@ -2348,11 +2528,14 @@ export default function SlaApp() {
 
         {/* Histórico de uploads */}
         <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
-          <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontWeight:700,fontSize:14}}>📂 Histórico de Uploads</div><div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>CSVs importados — salvo entre sessões.</div></div>
-            {uploadHistory.length>0&&<button onClick={()=>{if(!window.confirm("Limpar histórico?")) return;try{localStorage.removeItem("slaParca_hist");}catch{}setUploadHistory([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>}
+          <div onClick={()=>setMostrarUploadHistory(v=>!v)} style={{padding:"14px 20px",borderBottom: mostrarUploadHistory ? `1px solid ${C.cinzaBorda}` : "none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarUploadHistory?"▾":"▸"}</span>
+              <div><div style={{fontWeight:700,fontSize:14}}>📂 Histórico de Uploads{!mostrarUploadHistory && uploadHistory.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({uploadHistory.length})</span>}</div><div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>CSVs importados — salvo entre sessões.</div></div>
+            </div>
+            {uploadHistory.length>0&&<button onClick={(e)=>{e.stopPropagation();if(!window.confirm("Limpar histórico?")) return;try{localStorage.removeItem("slaParca_hist");}catch{}setUploadHistory([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>}
           </div>
-          {uploadHistory.length===0
+          {!mostrarUploadHistory ? null : uploadHistory.length===0
             ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhum CSV importado ainda.</div>
             :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead><tr style={{background:C.cinzaFundo}}>{["#","Arquivo","Data / Hora","Linhas"].map(h=><th key={h} style={{padding:"8px 14px",textAlign:h==="Arquivo"?"left":"center",fontSize:11,fontWeight:700,color:C.cinzaTexto,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
