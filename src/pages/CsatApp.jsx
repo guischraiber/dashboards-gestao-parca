@@ -130,10 +130,26 @@ function parseData(respostas, disparos, semanasTravadas = {}) {
     semanasNovas.push(ultimaSemanaRaw);
   }
 
+  // As duas semanas mais recentes nunca travam — ficam sempre recalculadas
+  // direto do CSV a cada importação, porque respostas de CSAT continuam
+  // chegando por alguns dias após a coleta. Só a partir da 3ª semana mais
+  // recente pra trás é que o valor congela (trava) permanentemente.
+  const semanaMaisRecente = semanaSet.length ? semanaSet[semanaSet.length - 1] : null;
+  const semanasProtegidas = semanaMaisRecente != null
+    ? new Set([semanaMaisRecente, semanaMaisRecente - 1])
+    : new Set();
+
   // Calcular agregados do CSV para semanas novas — salvar as que atingiram >= 20
   const novasTravadas = { ...semanasTravadas };
   semanasNovas.forEach(w => {
     const chave = chaveW(w);
+    if (semanasProtegidas.has(w)) {
+      // Semana dentro da janela protegida: nunca fica travada. Se ela tinha
+      // ficado travada por engano antes (ex: era a mais recente numa
+      // importação anterior), apaga a trava pra voltar a recalcular do CSV.
+      delete novasTravadas[chave];
+      return;
+    }
     const respW = respEnrich.filter(r => r.semana === w);
     const dispW = dispEnrich.filter(r => r.semana === w);
     const totalResp = respW.length;
@@ -155,10 +171,11 @@ function parseData(respostas, disparos, semanasTravadas = {}) {
 
   const semanas = todasSemanas;
 
-  // Calcular porSemana: usar travado se disponível, senão calcular do CSV
+  // Calcular porSemana: semanas protegidas sempre recalculam do CSV; as
+  // demais usam o valor travado se disponível, senão calculam do CSV.
   const porSemana = semanas.map(w => {
     const chave = chaveW(w);
-    if (novasTravadas[chave]) return novasTravadas[chave];
+    if (!semanasProtegidas.has(w) && novasTravadas[chave]) return novasTravadas[chave];
     return calcAgregado(
       respEnrich.filter(r => r.semana === w),
       dispEnrich.filter(r => r.semana === w),
