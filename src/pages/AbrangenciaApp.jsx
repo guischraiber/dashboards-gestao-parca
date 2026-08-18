@@ -2183,6 +2183,27 @@ function parseCSVDistribuicaoAtual(texto) {
     .filter(r => r.estado && r.cidade && r.transportadora);
 }
 
+// Lê um arquivo como texto detectando a codificação automaticamente. Exports de
+// CSV no Brasil às vezes saem em Windows-1252/ISO-8859-1 (comum em planilhas do
+// Excel) em vez de UTF-8 — ler sempre como UTF-8 faz "Parça"/"Não" virarem
+// caracteres corrompidos. Tenta decodificar como UTF-8 estrito primeiro; se os
+// bytes não formarem UTF-8 válido, cai para Windows-1252.
+function lerArquivoComoTexto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const buffer = ev.target.result;
+      try {
+        resolve(new TextDecoder("utf-8", { fatal: true }).decode(buffer));
+      } catch {
+        resolve(new TextDecoder("windows-1252").decode(buffer));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error("Erro ao ler o arquivo."));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 function baixarModeloDistribuicao() {
   const csv = "Estado,Cidade,Transportadora,Parça (Sim/Não)\nSP,Sao Paulo,Safari Montagem,Sim\nSP,Sao Paulo,Transportadora XYZ,Não\n";
   const blob = new Blob([csv], { type: "text/csv" });
@@ -2382,28 +2403,26 @@ export default function AbrangenciaApp() {
 
   const handleUploadDistribuicao = useCallback((file) => {
     setLoadingDist(file.name); setErroDist("");
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
+    (async () => {
       try {
-        const rows = parseCSVDistribuicaoAtual(ev.target.result);
+        const texto = await lerArquivoComoTexto(file);
+        const rows = parseCSVDistribuicaoAtual(texto);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: Estado, Cidade, Transportadora, Parça (Sim/Não).");
         const novo = { rows, nome: file.name, data: new Date().toISOString() };
         await salvarChave("distribuicaoAtual", novo);
         setDistribuicaoAtual(novo);
       } catch (e) { setErroDist(e.message || String(e)); } finally { setLoadingDist(""); }
-    };
-    reader.onerror = () => { setErroDist("Erro ao ler o arquivo."); setLoadingDist(""); };
-    reader.readAsText(file);
+    })();
   }, []);
 
   const handleUpload = useCallback((file) => {
     setLoading(file.name); setErro(""); setAvisoPersist(false); setAvisoPersistDetalhe("");
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
+    (async () => {
       try {
-        const rows = parseCSVAbrangencia(ev.target.result);
+        const texto = await lerArquivoComoTexto(file);
+        const rows = parseCSVAbrangencia(texto);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: VALIDAÇÃO, Logistica Reversa Transportadora, Logistica Reversa Estado, Logistica Reversa Cidade, Abrangencia.");
-        const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:ev.target.result };
+        const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:texto };
         // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
         // independente do estado React (que pode estar desatualizado dentro do closure).
         const atualSalvo = await carregarChave("atual");
@@ -2426,9 +2445,7 @@ export default function AbrangenciaApp() {
         }
         setAtual(novoAtual);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
-    };
-    reader.onerror = () => { setErro("Erro ao ler o arquivo."); setLoading(""); };
-    reader.readAsText(file);
+    })();
   }, []);
 
   const baixarUltimaImportada = useCallback(() => {
