@@ -2215,17 +2215,21 @@ function baixarModeloDistribuicao() {
 
 // Recalcula a cobertura Parça do ano inteiro já importado, mas usando a distribuição
 // ATUAL (quem é Parça em cada cidade hoje) em vez da validação histórica de cada linha.
-// Cruzamento por Estado+Cidade+Transportadora: só credita como Parça o histórico
-// daquela transportadora específica nas cidades onde ela é parceira hoje — não mexe
-// nas outras transportadoras não-Parça da mesma cidade.
+// Cruzamento por Estado+Cidade (não por transportadora): a "Lista de Decisão" traz
+// praticamente sempre uma única transportadora por cidade (é uma decisão de quem
+// atende cada cidade hoje, não uma lista de concorrentes na mesma praça). Por isso,
+// se a cidade tem hoje uma transportadora Parça — mesmo que ela tenha substituído uma
+// transportadora não-Parça diferente ao longo do ano — todo o histórico daquela
+// cidade conta como Parça simulado. Cruzar por transportadora specífica deixava de
+// creditar cidades onde a transportadora antiga (não-Parça) foi totalmente trocada
+// pela atual (Parça), já que a antiga nunca aparece na distribuição de hoje.
 function calcularSimulacao(rowsAno, rosterAtual) {
   let totalReal = 0, parcaReal = 0, parcaSimulado = 0;
   const porCidade = new Map();
   rowsAno.forEach(r => {
     const key = `${r.estado}|${normalizarCidade(r.cidade)}`;
-    const chaveRoster = `${r.estado}|${normalizarCidade(r.cidade)}|${normalizarCidade(r.transportadora)}`;
     const ehParcaReal = r.validacao === "PARÇA";
-    const ehParcaSimulada = ehParcaReal || rosterAtual.has(chaveRoster);
+    const ehParcaSimulada = ehParcaReal || rosterAtual.has(key);
 
     totalReal += r.abrangencia;
     if (ehParcaReal) parcaReal += r.abrangencia;
@@ -2678,7 +2682,7 @@ export default function AbrangenciaApp() {
   const rosterAtual = useMemo(() => {
     const s = new Set();
     (distribuicaoAtual?.rows || []).forEach(r => {
-      if (r.souParca) s.add(`${r.estado}|${normalizarCidade(r.cidade)}|${normalizarCidade(r.transportadora)}`);
+      if (r.souParca) s.add(`${r.estado}|${normalizarCidade(r.cidade)}`);
     });
     return s;
   }, [distribuicaoAtual]);
@@ -3242,7 +3246,7 @@ export default function AbrangenciaApp() {
                 <div style={{ maxWidth:640 }}>
                   <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>🔮 Share Anual Simulado com Distribuição Atual</div>
                   <div style={{ fontSize:13, color:C.cinzaTexto, lineHeight:1.5 }}>
-                    Pega o volume do ano inteiro já importado e recalcula quanto seria Parça se a distribuição de hoje (quem é Parça em cada cidade) já valesse desde o início — credita como Parça o histórico daquela transportadora específica nas cidades onde ela é parceira hoje, mesmo nos meses em que ainda não era.
+                    Pega o volume do ano inteiro já importado e recalcula quanto seria Parça se a distribuição de hoje (quem é Parça em cada cidade) já valesse desde o início — credita como Parça todo o histórico das cidades onde existe um parceiro Parça hoje, mesmo nos meses em que quem atendia a cidade ainda não era Parça (ou era outra transportadora).
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -3297,7 +3301,7 @@ export default function AbrangenciaApp() {
                   </div>
 
                   {simulacao.detalhe.length === 0 ? (
-                    <div style={{ fontSize:13, color:C.cinzaTexto }}>Nenhuma cidade do histórico bateu com a distribuição atual importada (Estado+Cidade+Transportadora) — confira se os nomes de cidade/transportadora estão escritos igual ao arquivo de abrangência.</div>
+                    <div style={{ fontSize:13, color:C.cinzaTexto }}>Nenhuma cidade do histórico bateu com a distribuição atual importada (Estado+Cidade) — confira se os nomes de estado/cidade estão escritos igual ao arquivo de abrangência.</div>
                   ) : (
                     <>
                       <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Cidades onde a distribuição atual muda a leitura do histórico</div>
