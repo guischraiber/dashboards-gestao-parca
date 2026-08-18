@@ -123,40 +123,12 @@ const busdays = (d1Str, d2Str) => {
   } catch{ return null; }
 };
 
-// ── Exceções de prazo do SLA Reversa ────────────────────────────────────────
-// Normalmente o SLA Reversa lê a coluna "Vencido" pronta do CSV (prazo padrão
-// definido na origem, ~10 dias úteis). Aqui registramos exceções pontuais —
-// semana + parceiro com prazo diferente — recalculadas a partir das datas
-// reais (dias úteis), ignorando a coluna "Vencido" só para essas linhas. Não
-// afeta o Aging Médio, que continua sempre com o cálculo normal de dias úteis.
-const EXCECOES_PRAZO_SLA = [
-  { semana: 33, transportadora: "SAFARI MONTAGEM", prazoDias: 15 },
-];
-
-function prazoExcecao(row) {
-  const semana = parseInt(row["semana_Efetivada"]);
-  const transp = norm(row["Transportadora"]).toUpperCase();
-  const ex = EXCECOES_PRAZO_SLA.find(e => e.semana === semana && norm(e.transportadora).toUpperCase() === transp);
-  return ex ? ex.prazoDias : null;
-}
-
-// Determina se uma linha está "dentro do prazo" pro SLA Reversa. Por padrão usa
-// a coluna "Vencido" do CSV; se a linha cair numa exceção registrada acima,
-// recalcula com base em dias úteis reais e no prazo da exceção.
-function dentroDoPrazoSLA(row) {
-  const prazo = prazoExcecao(row);
-  if (prazo == null) return norm(row["Vencido"]) === "Nao";
-  const dias = busdays(row["Data Solicitacao Date"], row["Data Coleta Efetivada Date"]);
-  if (dias == null) return norm(row["Vencido"]) === "Nao"; // sem datas válidas, cai no padrão
-  return dias <= prazo;
-}
-
 // ── calcSemana ─────────────────────────────────────────────────────────────────
 const calcSemana = (rows) => {
   const base = rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
   if(base.length<3) return null;
   const sp   = base.filter(r=>r["Problema_de_coleta"]!=="1"&&r["Problema_de_coleta"]!==1&&r["Problema_de_coleta"]!==true);
-  const isNao    = r=>dentroDoPrazoSLA(r);
+  const isNao    = r=>norm(r["Vencido"])==="Nao";
   const isNao15  = r=>norm(r["Vencido (SLA Cliente)"])==="Nao";
   const isAg     = r=>r["Agendamento"]==="1"||r["Agendamento"]===1;
   const isAder   = r=>{const v=r["Aderencia agendamento "]??r["Aderencia agendamento"];return v==="1"||v===1;};
