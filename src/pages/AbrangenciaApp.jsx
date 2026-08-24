@@ -2805,6 +2805,10 @@ export default function AbrangenciaApp() {
   // UFs excluídas da simulação (estados onde não vendemos mais)
   const [ufsExcluidasSim, setUfsExcluidasSim] = useState([]);
 
+  // Filtro de cidade/estado da tabela de detalhe da simulação
+  const [fSimCidade, setFSimCidade] = useState("");
+  const [fSimEstado, setFSimEstado] = useState("Todos");
+
   const ufsSimDisponiveis = useMemo(() => {
     if (!atual) return [];
     return [...new Set(atual.rows.map(r => r.estado))].filter(Boolean).sort();
@@ -2828,6 +2832,31 @@ export default function AbrangenciaApp() {
     if (!atual || !distribuicaoAtual) return null;
     return calcularSimulacao(rowsSimulacao, rosterAtual);
   }, [atual, distribuicaoAtual, rosterAtual, rowsSimulacao]);
+
+  // Detalhe da simulação filtrado por estado e busca de cidade (sem acento,
+  // case-insensitive, casando por trecho do nome)
+  const detalheSimFiltrado = useMemo(() => {
+    if (!simulacao) return [];
+    const alvo = normalizarCidade(fSimCidade);
+    return simulacao.detalhe.filter(c =>
+      (fSimEstado === "Todos" || c.estado === fSimEstado) &&
+      (!alvo || normalizarCidade(c.cidade).includes(alvo))
+    );
+  }, [simulacao, fSimCidade, fSimEstado]);
+
+  const estadosSimDetalhe = useMemo(() => {
+    if (!simulacao) return [];
+    return [...new Set(simulacao.detalhe.map(c => c.estado))].filter(Boolean).sort();
+  }, [simulacao]);
+
+  const cidadesSimDetalhe = useMemo(() => {
+    if (!simulacao) return [];
+    return [...new Set(
+      simulacao.detalhe
+        .filter(c => fSimEstado === "Todos" || c.estado === fSimEstado)
+        .map(c => c.cidade)
+    )].sort((a,b)=>a.localeCompare(b));
+  }, [simulacao, fSimEstado]);
 
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
@@ -3510,6 +3539,43 @@ export default function AbrangenciaApp() {
                   ) : (
                     <>
                       <div style={{ fontWeight:700, fontSize:13, marginBottom:8 }}>Cidades onde a distribuição atual muda a leitura do histórico</div>
+
+                      {/* Filtro de cidade / estado da tabela */}
+                      <div style={{ display:"flex", gap:8, marginBottom:10, flexWrap:"wrap", alignItems:"center" }}>
+                        <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Estado:</span>
+                        <select value={fSimEstado} onChange={e=>{ setFSimEstado(e.target.value); setFSimCidade(""); }}
+                          style={{ padding:"5px 10px", borderRadius:6, fontSize:12, fontWeight:600, cursor:"pointer",
+                            border:`1.5px solid ${fSimEstado!=="Todos"?C.laranja:C.cinzaBorda}`,
+                            color: fSimEstado!=="Todos"?C.laranja:C.cinzaTexto }}>
+                          <option value="Todos">Todos os estados</option>
+                          {estadosSimDetalhe.map(uf => <option key={uf} value={uf}>{uf}</option>)}
+                        </select>
+
+                        <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Cidade:</span>
+                        <input type="text" value={fSimCidade} onChange={e=>setFSimCidade(e.target.value)}
+                          placeholder="Buscar cidade..."
+                          list="cidades-simulacao-list"
+                          style={{ padding:"5px 10px", borderRadius:6, fontSize:12, fontWeight:600, width:220,
+                            border:`1.5px solid ${fSimCidade?C.laranja:C.cinzaBorda}`,
+                            color: fSimCidade?C.laranja:C.texto }} />
+                        <datalist id="cidades-simulacao-list">
+                          {cidadesSimDetalhe.slice(0,1500).map(c => <option key={c} value={c} />)}
+                        </datalist>
+
+                        {(fSimCidade || fSimEstado!=="Todos") && (
+                          <button onClick={()=>{ setFSimCidade(""); setFSimEstado("Todos"); }} style={sq()}>Limpar filtros</button>
+                        )}
+
+                        <span style={{ fontSize:11, color:C.cinzaTexto, marginLeft:"auto" }}>
+                          {detalheSimFiltrado.length.toLocaleString("pt-BR")} de {simulacao.detalhe.length.toLocaleString("pt-BR")} cidades
+                          {" · ganho de "}
+                          <strong style={{ color:C.verde }}>
+                            +{detalheSimFiltrado.reduce((s,c)=>s+c.ganhoAbs,0).toLocaleString("pt-BR")}
+                          </strong>
+                          {" coletas no filtro"}
+                        </span>
+                      </div>
+
                       <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
                         <thead>
                           <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
@@ -3522,7 +3588,12 @@ export default function AbrangenciaApp() {
                           </tr>
                         </thead>
                         <tbody>
-                          {simulacao.detalhe.map((c,i)=>(
+                          {detalheSimFiltrado.length === 0 && (
+                            <tr><td colSpan={6} style={{ padding:"10px 6px", color:C.cinzaTexto }}>
+                              Nenhuma cidade encontrada com esse filtro.
+                            </td></tr>
+                          )}
+                          {detalheSimFiltrado.map((c,i)=>(
                             <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
                               <td style={{ padding:"4px 6px" }}>{c.estado}</td>
                               <td style={{ padding:"4px 6px", fontWeight:600 }}>{c.cidade}</td>
