@@ -2360,6 +2360,10 @@ export default function AbrangenciaApp() {
   const [anterior, setAnterior] = useState(null);
   const [loading,  setLoading]  = useState("");
   const [erro,     setErro]     = useState("");
+  const [enviandoAbrangencia, setEnviandoAbrangencia] = useState(false);
+  const [erroEnvioAbrangencia, setErroEnvioAbrangencia] = useState("");
+  const [historicoAbrangencia, setHistoricoAbrangencia] = useState([]);
+  const [origemDados, setOrigemDados] = useState(""); // "servidor" | "local"
   const [avisoPersist, setAvisoPersist] = useState(false);
   const [avisoPersistDetalhe, setAvisoPersistDetalhe] = useState("");
 
@@ -2397,16 +2401,82 @@ export default function AbrangenciaApp() {
   // ── Evolução
   const [evolGranularidade, setEvolGranularidade] = useState("semana"); // semana | mes
 
+  // ── Carregamento das bases ────────────────────────────────────────────────
+  // Fonte única: o backend (data/abrangenciaAtual.csv e abrangenciaAnterior.csv
+  // no GitHub, servidos por api/abrangencia.js) — o mesmo endpoint que o Weekly
+  // já consome. Uma importação feita por qualquer pessoa passa a valer para
+  // todos, sem depender do IndexedDB de cada navegador (era o motivo de a aba
+  // aparecer zerada para quem só recebia o link).
+  const recarregarAbrangenciaDoServidor = useCallback(async () => {
+    try {
+      const r = await fetch("/api/abrangencia");
+      if (!r.ok) return false;
+      const data = await r.json();
+      let achou = false;
+      if (data && data.atualCSV) {
+        setAtual({
+          rows: parseCSVAbrangencia(data.atualCSV),
+          nome: data.atualNome,
+          data: data.atualData,
+          csvRaw: data.atualCSV,
+        });
+        achou = true;
+      }
+      if (data && data.anteriorCSV) {
+        setAnterior({
+          rows: parseCSVAbrangencia(data.anteriorCSV),
+          nome: data.anteriorNome,
+          data: data.anteriorData,
+          csvRaw: data.anteriorCSV,
+        });
+      }
+      setHistoricoAbrangencia(data?.historico || []);
+      if (achou) setOrigemDados("servidor");
+      return achou;
+    } catch (e) {
+      console.warn("Não foi possível carregar a Abrangência do servidor:", e);
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
-      const a = await carregarChave("atual");
-      const b = await carregarChave("anterior");
+      const veioDoServidor = await recarregarAbrangenciaDoServidor();
+      // IndexedDB fica só como fallback offline (ou enquanto o deploy com o
+      // CSV novo não subiu): nunca sobrepõe o que veio do servidor.
+      if (!veioDoServidor) {
+        const a = await carregarChave("atual");
+        const b = await carregarChave("anterior");
+        if (a) { setAtual(a); setOrigemDados("local"); }
+        if (b) setAnterior(b);
+      }
+      // A distribuição da simulação continua local (não existe endpoint pra ela).
       const d = await carregarChave("distribuicaoAtual");
-      if (a) setAtual(a);
-      if (b) setAnterior(b);
       if (d) setDistribuicaoAtual(d);
     })();
-  }, []);
+  }, [recarregarAbrangenciaDoServidor]);
+
+  // Publica o CSV no backend — a promoção atual → anterior é feita pelo endpoint.
+  const enviarAbrangenciaParaServidor = useCallback(async (csvTexto, nomeArquivo) => {
+    setEnviandoAbrangencia(true);
+    setErroEnvioAbrangencia("");
+    try {
+      const r = await fetch("/api/abrangencia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: csvTexto, nome: nomeArquivo }),
+      });
+      let data;
+      try { data = await r.json(); }
+      catch { throw new Error(`Resposta inesperada do servidor (status ${r.status}).`); }
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+      await recarregarAbrangenciaDoServidor();
+    } catch (e) {
+      setErroEnvioAbrangencia(`Não consegui salvar no servidor (os outros colaboradores não verão esta atualização): ${e?.message || e}`);
+    } finally {
+      setEnviandoAbrangencia(false);
+    }
+  }, [recarregarAbrangenciaDoServidor]);
 
   const handleUploadDistribuicao = useCallback((file) => {
     setLoadingDist(file.name); setErroDist("");
@@ -2430,6 +2500,10 @@ export default function AbrangenciaApp() {
         const rows = parseCSVAbrangencia(texto);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: VALIDAÇÃO, Logistica Reversa Transportadora, Logistica Reversa Estado, Logistica Reversa Cidade, Abrangencia.");
         const novoAtual = { rows, nome:file.name, data:new Date().toISOString(), csvRaw:texto };
+
+        // 1) Publica no backend — é isso que faz o dado valer para todos.
+        //    (a promoção atual → anterior acontece no próprio endpoint)
+        await enviarAbrangenciaParaServidor(texto, file.name);
         // Lê o "atual" direto do IndexedDB pra garantir que temos o valor mais recente,
         // independente do estado React (que pode estar desatualizado dentro do closure).
         const atualSalvo = await carregarChave("atual");
@@ -2453,7 +2527,7 @@ export default function AbrangenciaApp() {
         setAtual(novoAtual);
       } catch(e) { setErro(e.message||String(e)); } finally { setLoading(""); }
     })();
-  }, []);
+  }, [enviarAbrangenciaParaServidor]);
 
   const baixarUltimaImportada = useCallback(() => {
     if (!atual) return;
@@ -2738,9 +2812,13 @@ export default function AbrangenciaApp() {
               ⬇ Baixar última importada
             </button>
           )}
-          <label style={{ padding:"8px 14px", borderRadius:8, background:C.laranja, color:"#fff", fontSize:13, fontWeight:600, cursor:"pointer" }}>
-            <input type="file" accept=".csv" style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) handleUpload(e.target.files[0]); e.target.value=""; }} />
-            📂 Importar planilha
+          <button onClick={recarregarAbrangenciaDoServidor}
+            style={{ padding:"8px 14px", borderRadius:8, border:`1.5px solid ${C.cinzaBorda}`, fontSize:13, fontWeight:600, cursor:"pointer", background:"transparent", color:C.texto }}>
+            🔄 Recarregar do servidor
+          </button>
+          <label style={{ padding:"8px 14px", borderRadius:8, background:C.laranja, color:"#fff", fontSize:13, fontWeight:600, cursor: enviandoAbrangencia ? "not-allowed" : "pointer", opacity: enviandoAbrangencia ? 0.6 : 1 }}>
+            <input type="file" accept=".csv" disabled={enviandoAbrangencia} style={{ display:"none" }} onChange={e=>{ if(e.target.files[0]) handleUpload(e.target.files[0]); e.target.value=""; }} />
+            {enviandoAbrangencia ? "⏳ Enviando..." : "📂 Importar planilha"}
           </label>
         </div>
       </div>
@@ -2749,6 +2827,15 @@ export default function AbrangenciaApp() {
       </div>
 
       {loading && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Processando {loading}...</div>}
+      {enviandoAbrangencia && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Publicando no servidor (vale para todos os colaboradores em ~1 minuto, tempo do redeploy)...</div>}
+      {erroEnvioAbrangencia && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erroEnvioAbrangencia}</div>}
+      {atual && (
+        <div style={{ fontSize:11, color:C.cinzaTexto, marginBottom:12 }}>
+          {origemDados === "servidor"
+            ? <>Base vinda do servidor (vale para todos): <strong>{atual.nome}</strong>{atual.data && <> · importada em {new Date(atual.data).toLocaleString("pt-BR")}</>}{historicoAbrangencia.length > 0 && <> · {historicoAbrangencia.length} importação(ões) no histórico</>}</>
+            : <>⚠️ Base carregada apenas deste navegador (cache local) — o servidor não devolveu nenhuma base. Reimporte a planilha para publicar para os outros colaboradores.</>}
+        </div>
+      )}
       {erro && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erro}</div>}
       {avisoPersist && <div style={{ padding:10, background:"#FEF3C7", border:"1px solid #FBBF24", borderRadius:8, color:"#92400E", fontSize:12, marginBottom:12 }}>⚠️ {avisoPersistDetalhe || "Não consegui salvar neste navegador — será preciso reimportar ao recarregar a página."}</div>}
 
