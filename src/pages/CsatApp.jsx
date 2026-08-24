@@ -39,18 +39,23 @@ function getISOWeek(d) {
   return Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
 }
 
-// ── localStorage — semanas travadas ──────────────────────────────────────────
-const STORAGE_KEY = "csat_semanas_travadas";
+// ── Semanas travadas ─────────────────────────────────────────────────────────
+// Antes ficavam só em localStorage ("csat_semanas_travadas") — cada navegador
+// tinha o seu conjunto, e o CSAT do Weekly aparecia apenas para quem tinha
+// travado as semanas na própria máquina. Agora as travas (e o snapshot de
+// porSemana) vivem no servidor, em data/csatAgregados.json, via api/csat.js.
+// A chave antiga continua sendo LIDA uma única vez, só para migrar o histórico
+// de quem já tinha travas locais; nada é mais gravado nela.
+const STORAGE_KEY_LEGADO = "csat_semanas_travadas";
 
-function carregarSemanasTravadas() {
+function lerTravadasLegado() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {}; // { "2026_W10": {...agregado} }
+    const raw = localStorage.getItem(STORAGE_KEY_LEGADO);
+    if (!raw) return {};
+    const val = JSON.parse(raw);
+    if (Array.isArray(val)) return {};           // formato antigo em array: ignora
+    return val && typeof val === "object" ? val : {};
   } catch { return {}; }
-}
-
-function salvarSemanasTravadas(travadas) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(travadas)); } catch {}
 }
 
 function chaveWeek(ano, semana) { return `${ano}_W${semana}`; }
@@ -159,7 +164,8 @@ function parseData(respostas, disparos, semanasTravadas = {}) {
       novasTravadas[chave] = calcAgregado(respW, dispW, `W${w}`, w, null);
     }
   });
-  salvarSemanasTravadas(novasTravadas);
+  // Nada é gravado aqui: as travas voltam no retorno e quem chama decide
+  // publicá-las no servidor (api/csat.js).
 
   // Unir semanas travadas + semanas novas ainda não travadas
   const todasSemanas = [...new Set([
@@ -196,7 +202,7 @@ function parseData(respostas, disparos, semanasTravadas = {}) {
   // Consolidado anual
   const porAno = [calcAgregado(respEnrich, dispEnrich, `${anoAtual}`, null, null)];
 
-  return { respEnrich, dispEnrich, porSemana, porMes, porAno, semanas, meses, ultimaSemanaEmAndamento, ultimaSemanaRaw, ultimaSemanaResp, semanasTravadasCount, anoAtual };
+  return { respEnrich, dispEnrich, porSemana, porMes, porAno, semanas, meses, ultimaSemanaEmAndamento, ultimaSemanaRaw, ultimaSemanaResp, semanasTravadasCount, anoAtual, travadas: novasTravadas };
 }
 
 function calcAgregado(resp, disp, label, semana, mes) {
@@ -404,26 +410,60 @@ export default function CsatApp() {
   const [historicoCsat, setHistoricoCsat] = useState([]);
   const [mostrarHistoricoCsat, setMostrarHistoricoCsat] = useState(true);
   const [mostrarUploadHistoryCsat, setMostrarUploadHistoryCsat] = useState(true);
-  const [uploadHistory, setUploadHistory] = useState(() => {
-    try { const s = localStorage.getItem("csat_upload_hist"); return s ? JSON.parse(s) : []; } catch { return []; }
-  });
-  const [travadas, setTravadas] = useState(() => carregarSemanasTravadas());
+  const [uploadHistory, setUploadHistory] = useState([]); // log da sessão (o histórico oficial vem do servidor: historicoCsat)
+  const [travadas, setTravadas] = useState({});          // vem de data/csatAgregados.json
+  const [travadasCarregadas, setTravadasCarregadas] = useState(false);
+  const [publicandoAgregados, setPublicandoAgregados] = useState(false);
+  const [statusAgregados, setStatusAgregados] = useState("");
 
   const respostasRef = useRef(null);
   const disparosRef = useRef(null);
   const respostasTextoRef = useRef(null);
   const disparosTextoRef = useRef(null);
 
-  const calcular = useCallback((resp, disp) => {
-    if (resp && disp) {
-      const semanasTravadas = carregarSemanasTravadas();
-      const result = parseData(resp, disp, semanasTravadas);
-      setParsed(result);
-      setPeriodoSel(result.semanas[result.semanas.length - 1] || null);
-      setFromURL(false);
-      window.history.replaceState({}, "", window.location.pathname);
-      setTravadas(carregarSemanasTravadas());
+  // Publica travas + snapshot semanal no servidor (data/csatAgregados.json),
+  // pra que o CSAT do Weekly e de qualquer outro navegador seja o mesmo.
+  const publicarAgregados = useCallback(async (result) => {
+    if (!result) return;
+    setPublicandoAgregados(true);
+    setStatusAgregados("");
+    try {
+      const porSemanaSlim = (result.porSemana || []).map(p => p.slim || p);
+      const r = await fetch("/api/csat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agregados: {
+            travadas: result.travadas || {},
+            porSemana: porSemanaSlim,
+            anoAtual: result.anoAtual || null,
+          },
+        }),
+      });
+      let data;
+      try { data = await r.json(); }
+      catch { throw new Error(`Resposta inesperada do servidor (status ${r.status}).`); }
+      if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+      setStatusAgregados("✓ Agregados publicados — o Weekly e os outros colaboradores já usam esses números (após o redeploy, ~1 min).");
+    } catch (e) {
+      setStatusAgregados(`⚠️ Não consegui publicar os agregados no servidor: ${e?.message || e}`);
+    } finally {
+      setPublicandoAgregados(false);
     }
+  }, []);
+
+  // `travadasBase` permite recalcular usando as travas que vieram do servidor
+  // (ou as migradas do navegador antigo) em vez do state, que pode estar
+  // desatualizado dentro do closure.
+  const calcular = useCallback((resp, disp, travadasBase) => {
+    if (!resp || !disp) return null;
+    const result = parseData(resp, disp, travadasBase || {});
+    setParsed(result);
+    setPeriodoSel(result.semanas[result.semanas.length - 1] || null);
+    setFromURL(false);
+    window.history.replaceState({}, "", window.location.pathname);
+    setTravadas(result.travadas || {});
+    return result;
   }, []);
 
   // Carrega as duas bases do backend (data/csatRespostas.csv e
@@ -447,13 +487,24 @@ export default function CsatApp() {
           respostas: { nome: data.nomeRespostas || "—", linhas: resp.length },
           disparos: { nome: data.nomeDisparos || "—", linhas: disp.length },
         });
-        calcular(resp, disp);
+        // Travas: servidor é a fonte. Só na primeira vez (servidor sem nada)
+        // aproveita as travas que existirem no navegador, pra não perder o
+        // histórico já apresentado nas weeklies anteriores — e publica.
+        const travadasServidor = data?.agregados?.travadas || {};
+        const veioDoServidor = Object.keys(travadasServidor).length > 0;
+        const base = veioDoServidor ? travadasServidor : lerTravadasLegado();
+        const result = calcular(resp, disp, base);
+        setTravadasCarregadas(true);
+        if (!veioDoServidor && result) {
+          setStatusAgregados("⏳ Servidor sem agregados de CSAT — publicando as travas deste navegador...");
+          publicarAgregados(result);
+        }
       }
       setHistoricoCsat(data?.historico || []);
     } catch (e) {
       console.warn("Não foi possível carregar o CSAT do servidor:", e);
     }
-  }, [calcular]);
+  }, [calcular, publicarAgregados]);
 
   // Carregar dados da URL ao montar
   useEffect(() => {
@@ -483,20 +534,8 @@ export default function CsatApp() {
           setPeriodoSel(decoded.semanas?.[decoded.semanas.length - 1] || null);
           setFromURL(true);
 
-          // Salvar semanas do link no localStorage como base para próximo upload
-          const travadas = {};
-          const anoLink = decoded.anoAtual || new Date().getFullYear();
-          for (const p of (decoded.porSemana || [])) {
-            if (p.semana && p.respostas >= 20) {
-              travadas[`${anoLink}_W${p.semana}`] = p;
-            }
-          }
-          if (Object.keys(travadas).length > 0) {
-            // Mesclar com o que já estava no localStorage (sem sobrescrever)
-            const existentes = carregarSemanasTravadas();
-            const merged = { ...travadas, ...existentes };
-            salvarSemanasTravadas(merged);
-          }
+          // O link é só visualização: as travas oficiais ficam no servidor
+          // (data/csatAgregados.json) e não são mais gravadas por navegador.
         }
       });
       return;
@@ -561,7 +600,11 @@ export default function CsatApp() {
       setArquivosInfo(prev => {
         const novo = { ...prev, [tipo]: { nome: file.name, linhas: data.length, data: agora } };
         if (respostasRef.current && disparosRef.current) {
-          calcular(respostasRef.current, disparosRef.current);
+          // Recalcula partindo das travas atuais (as do servidor) e publica o
+          // resultado — assim a semana nova entra e as antigas seguem travadas
+          // para todos, não só neste navegador.
+          const resultado = calcular(respostasRef.current, disparosRef.current, travadas);
+          if (resultado) publicarAgregados(resultado);
           if (respostasTextoRef.current && disparosTextoRef.current) {
             enviarCsatParaServidor(
               respostasTextoRef.current, disparosTextoRef.current,
@@ -573,12 +616,10 @@ export default function CsatApp() {
       });
       setUploadHistory(prev => {
         const entry = { nome: file.name, data: agora, total: data.length, tipo };
-        const updated = [...prev, entry];
-        try { localStorage.setItem("csat_upload_hist", JSON.stringify(updated)); } catch {}
-        return updated;
+        return [...prev, entry];
       });
     });
-  }, [calcular, enviarCsatParaServidor]);
+  }, [calcular, enviarCsatParaServidor, publicarAgregados, travadas]);
 
   const onRespostas = loadCSV(setRespostas, "respostas");
   const onDisparos = loadCSV(setDisparos, "disparos");
@@ -881,7 +922,7 @@ export default function CsatApp() {
           {parsed && parsed.semanasTravadasCount > 0 && (
             <span style={{ fontSize: 11, color: C.azul, marginLeft: "auto", background: C.azulLight, borderRadius: 20, padding: "3px 10px", fontWeight: 600 }}>
               🔒 {parsed.semanasTravadasCount} semana{parsed.semanasTravadasCount !== 1 ? "s" : ""} travada{parsed.semanasTravadasCount !== 1 ? "s" : ""}
-              <button onClick={() => { if (window.confirm("Apagar todas as semanas travadas? Os dados serão recalculados do CSV.")) { localStorage.removeItem(STORAGE_KEY); calcular(respostasRef.current, disparosRef.current); } }} style={{ marginLeft: 8, fontSize: 10, color: C.vermelho, background: "none", border: "none", cursor: "pointer", fontWeight: 700, padding: 0 }}>✕ limpar</button>
+              <button onClick={() => { if (window.confirm("Apagar todas as semanas travadas (para todos os colaboradores)? Os dados serão recalculados do CSV.")) { const r = calcular(respostasRef.current, disparosRef.current, {}); if (r) publicarAgregados(r); } }} style={{ marginLeft: 8, fontSize: 10, color: C.vermelho, background: "none", border: "none", cursor: "pointer", fontWeight: 700, padding: 0 }}>✕ limpar</button>
             </span>
           )}
         </div>
@@ -1550,11 +1591,30 @@ export default function CsatApp() {
 
             {tab === "config" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {/* Cache de semanas travadas */}
+                {/* Agregados semanais — publicados no servidor */}
+                <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>🗄️ Agregados no servidor</div>
+                    <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>
+                      As semanas travadas e o resumo semanal ficam em <strong>data/csatAgregados.json</strong> — é daí que o Weekly e os outros colaboradores leem o CSAT.
+                    </div>
+                    {statusAgregados && (
+                      <div style={{ fontSize: 12, marginTop: 6, color: statusAgregados.startsWith("⚠️") ? C.vermelho : C.verde, fontWeight: 600 }}>{statusAgregados}</div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => publicarAgregados(parsed)}
+                    disabled={!parsed || publicandoAgregados}
+                    style={{ fontSize: 12, color: "#fff", background: C.laranja, border: "none", borderRadius: 6, padding: "7px 14px", cursor: (!parsed || publicandoAgregados) ? "not-allowed" : "pointer", fontWeight: 700, opacity: (!parsed || publicandoAgregados) ? 0.6 : 1 }}>
+                    {publicandoAgregados ? "⏳ Publicando..." : "⬆ Publicar agregados agora"}
+                  </button>
+                </div>
+
+                {/* Semanas travadas */}
                 {Object.keys(travadas).length > 0 && (
                   <div style={{ background: C.cinzaCard, border: `1px solid ${C.cinzaBorda}`, borderRadius: 12, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>💾 Cache de Semanas</div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>🔒 Semanas travadas</div>
                       <div style={{ fontSize: 12, color: C.cinzaTexto, marginTop: 2 }}>
                         Semanas salvas: <strong>
                           {[...new Set(Object.keys(travadas).map(k => parseInt(k.split("_W")[1])).filter(n => !isNaN(n)))]
@@ -1565,10 +1625,12 @@ export default function CsatApp() {
                       </div>
                     </div>
                     <button onClick={() => {
-                      if (!window.confirm("Limpar cache de semanas travadas? Os dados serão recalculados no próximo CSV.")) return;
-                      localStorage.removeItem(STORAGE_KEY);
+                      if (!window.confirm("Destravar todas as semanas (para todos os colaboradores)? Os valores voltam a ser recalculados do CSV.")) return;
                       setTravadas({});
-                      if (respostasRef.current && disparosRef.current) calcular(respostasRef.current, disparosRef.current);
+                      if (respostasRef.current && disparosRef.current) {
+                        const r = calcular(respostasRef.current, disparosRef.current, {});
+                        if (r) publicarAgregados(r);
+                      }
                     }} style={{ fontSize: 11, color: C.vermelho, background: C.vermelhoLight, border: `1px solid ${C.vermelho}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: 600 }}>🗑️ Limpar cache</button>
                   </div>
                 )}
@@ -1666,7 +1728,6 @@ export default function CsatApp() {
                       <button onClick={(e) => {
                         e.stopPropagation();
                         if (!window.confirm("Limpar histórico?")) return;
-                        try { localStorage.removeItem("csat_upload_hist"); } catch {}
                         setUploadHistory([]);
                       }} style={{ fontSize: 11, color: C.cinzaTexto, background: C.cinzaFundo, border: `1px solid ${C.cinzaBorda}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer" }}>🗑️ Limpar</button>
                     )}
