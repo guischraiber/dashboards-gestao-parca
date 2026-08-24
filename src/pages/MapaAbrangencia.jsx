@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import Papa from "papaparse";
 import { MapContainer, TileLayer, GeoJSON, CircleMarker, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -61,8 +62,15 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
   const [ufFoco,        setUfFoco]        = useState(null);
   const [resetKey,      setResetKey]      = useState(0);
 
-  // Filtro por parça / transportadora
-  const [filtroTransp,  setFiltroTransp]  = useState("Todos");
+  // Filtro por parça / transportadora — múltipla seleção (união: qualquer uma delas)
+  const [transpSel,     setTranspSel]     = useState([]);   // array de nomes
+
+  // Importação de cidades por CSV
+  const [importInfo,    setImportInfo]    = useState(null); // { ok, naoEncontradas:[] }
+  const fileRef = useRef(null);
+
+  // Mostrar no mapa somente as cidades da lista selecionada
+  const [soSelecionadas, setSoSelecionadas] = useState(false);
 
   // Buscador de cidades
   const [buscaCidade,   setBuscaCidade]   = useState("");
@@ -76,7 +84,21 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       const novo = new Map(prev);
       const key = `${p.uf}|${p.cidade}`;
       if (novo.has(key)) novo.delete(key);
-      else novo.set(key, { uf: p.uf, cidade: p.cidade, coletasTotal: p.coletasTotal, coletasParca: p.coletasParca, pct: p.pct });
+      else novo.set(key, { uf: p.uf, cidade: p.cidade, coletasTotal: p.coletasTotal, coletasParca: p.coletasParca, pct: p.pct, lat: p.lat, lon: p.lon });
+      return novo;
+    });
+  }, []);
+
+  // Adiciona um ou vários pontos à lista (sem remover os já existentes)
+  const adicionarCidades = useCallback((pts) => {
+    setCidadesSelecionadas(prev => {
+      const novo = new Map(prev);
+      pts.forEach(p => {
+        novo.set(`${p.uf}|${p.cidade}`, {
+          uf: p.uf, cidade: p.cidade, coletasTotal: p.coletasTotal,
+          coletasParca: p.coletasParca, pct: p.pct, lat: p.lat, lon: p.lon,
+        });
+      });
       return novo;
     });
   }, []);
@@ -145,10 +167,11 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       if (filtroVal === "NÃO PARÇA" && p.temParca)            return false;
       if (ufsRegiao && !ufsRegiao.includes(p.uf))             return false;
       if (p.coletasParca < filtroColetas)                     return false;
-      if (filtroTransp !== "Todos" && !p.transpTodas.has(filtroTransp)) return false;
+      if (transpSel.length && !transpSel.some(t => p.transpTodas.has(t))) return false;
+      if (soSelecionadas && !cidadesSelecionadas.has(`${p.uf}|${p.cidade}`)) return false;
       return true;
     });
-  }, [pontos, filtroVal, filtroRegiao, filtroColetas, filtroTransp]);
+  }, [pontos, filtroVal, filtroRegiao, filtroColetas, transpSel, soSelecionadas, cidadesSelecionadas]);
 
   // Cidades visíveis (para o datalist do buscador)
   const opcoesBusca = useMemo(
@@ -169,13 +192,83 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
     setCidadeFoco(exato ? exato.ponto : null);
   }, [opcoesBusca]);
 
-  // Bounds de todas as cidades atendidas pela transportadora filtrada
+  // Bounds de todas as cidades atendidas pelas transportadoras filtradas
   const boundsTransp = useMemo(() => {
-    if (filtroTransp === "Todos" || !pontosFiltrados.length) return null;
+    if (!transpSel.length || !pontosFiltrados.length) return null;
     const lats = pontosFiltrados.map(p => p.lat);
     const lons = pontosFiltrados.map(p => p.lon);
     return [[Math.min(...lats)-1, Math.min(...lons)-1], [Math.max(...lats)+1, Math.max(...lons)+1]];
-  }, [filtroTransp, pontosFiltrados]);
+  }, [transpSel, pontosFiltrados]);
+
+  // Zoom manual no conjunto de cidades selecionadas
+  const [boundsSelecao, setBoundsSelecao] = useState(null);
+  const zoomNaSelecao = useCallback(() => {
+    const vals = [...cidadesSelecionadas.values()].filter(c => c.lat != null && c.lon != null);
+    if (!vals.length) return;
+    const lats = vals.map(c => c.lat), lons = vals.map(c => c.lon);
+    // objeto novo a cada clique para o efeito disparar de novo
+    setBoundsSelecao([[Math.min(...lats)-0.6, Math.min(...lons)-0.6], [Math.max(...lats)+0.6, Math.max(...lons)+0.6]]);
+    setCidadeFoco(null);
+  }, [cidadesSelecionadas]);
+
+  // ── Importação de cidades por CSV ──────────────────────────────────────────
+  // Aceita colunas de cidade (Cidade / Municipio / Logistica Reversa Cidade) e,
+  // opcionalmente, de estado (Estado / UF / Logistica Reversa Estado).
+  const indicePontos = useMemo(() => {
+    const porUfCidade = new Map();   // "uf|cidade" normalizado -> ponto
+    const porCidade   = new Map();   // "cidade" normalizado -> [pontos]
+    pontos.forEach(p => {
+      porUfCidade.set(`${normTxt(p.uf)}|${normTxt(p.cidade)}`, p);
+      const k = normTxt(p.cidade);
+      if (!porCidade.has(k)) porCidade.set(k, []);
+      porCidade.get(k).push(p);
+    });
+    return { porUfCidade, porCidade };
+  }, [pontos]);
+
+  const importarCSV = useCallback((file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const { data } = Papa.parse(String(ev.target.result || ""), { header: true, skipEmptyLines: true });
+      const achados = [];
+      const naoEncontradas = [];
+      data.forEach(linha => {
+        const norm = {};
+        Object.entries(linha).forEach(([k, v]) => { norm[normTxt(k)] = v; });
+        const cidade = norm["cidade"] ?? norm["municipio"] ?? norm["logistica reversa cidade"] ?? norm["cidades"] ?? "";
+        const uf     = norm["estado"] ?? norm["uf"] ?? norm["logistica reversa estado"] ?? "";
+        const nc = normTxt(cidade);
+        if (!nc) return;
+        let achou = null;
+        if (normTxt(uf)) achou = indicePontos.porUfCidade.get(`${normTxt(uf)}|${nc}`) || null;
+        if (!achou) {
+          const cands = indicePontos.porCidade.get(nc) || [];
+          if (cands.length === 1) achou = cands[0];
+          else if (cands.length > 1) achou = null; // ambígua sem UF
+        }
+        if (achou) achados.push(achou);
+        else naoEncontradas.push(normTxt(uf) ? `${cidade} (${uf})` : String(cidade));
+      });
+      adicionarCidades(achados);
+      setImportInfo({ ok: achados.length, naoEncontradas });
+      if (achados.length) {
+        const lats = achados.map(p => p.lat), lons = achados.map(p => p.lon);
+        setBoundsSelecao([[Math.min(...lats)-0.6, Math.min(...lons)-0.6], [Math.max(...lats)+0.6, Math.max(...lons)+0.6]]);
+        setCidadeFoco(null);
+      }
+    };
+    reader.readAsText(file, "UTF-8");
+  }, [indicePontos, adicionarCidades]);
+
+  const baixarModeloCidades = useCallback(() => {
+    const csv = "Estado,Cidade\nSP,Campinas\nMG,Belo Horizonte\nPR,Curitiba";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "modelo-cidades.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   // Bounds da região selecionada para zoom automático
   const boundsRegiao = useMemo(() => {
@@ -257,7 +350,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           ))}
         </div>
 
-        <button onClick={()=>{ setFiltroVal("Todos"); setFiltroRegiao("Todas"); setFiltroColetas(0); setFiltroTransp("Todos"); setBuscaCidade(""); setCidadeFoco(null); setResetKey(k=>k+1); }}
+        <button onClick={()=>{ setFiltroVal("Todos"); setFiltroRegiao("Todas"); setFiltroColetas(0); setTranspSel([]); setBuscaCidade(""); setCidadeFoco(null); setSoSelecionadas(false); setBoundsSelecao(null); setResetKey(k=>k+1); }}
           style={{ marginLeft:"auto", padding:"5px 12px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
           Resetar
         </button>
@@ -282,6 +375,12 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           <datalist id="mapa-cidades-list">
             {opcoesBusca.slice(0, 1500).map(o => <option key={o.label} value={o.label} />)}
           </datalist>
+          {cidadeFoco && (
+            <button onClick={()=>adicionarCidades([cidadeFoco])}
+              style={{ padding:"5px 10px", borderRadius:6, border:"none", background:C.laranja, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              + Adicionar à lista
+            </button>
+          )}
           {buscaCidade && (
             <button onClick={()=>{ setBuscaCidade(""); setCidadeFoco(null); setResetKey(k=>k+1); }}
               style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
@@ -295,46 +394,132 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
         <div style={{ width:1, height:24, background:C.cinzaBorda }} />
 
-        {/* Filtro de parça / transportadora */}
-        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+        {/* Filtro de parça / transportadora — múltipla seleção */}
+        <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
           <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Parça / Transportadora:</span>
-          <select value={filtroTransp}
-            onChange={e=>{ setFiltroTransp(e.target.value); setCidadeFoco(null); setBuscaCidade(""); }}
+          <select value=""
+            onChange={e=>{
+              const v = e.target.value;
+              if (!v) return;
+              setTranspSel(prev => prev.includes(v) ? prev : [...prev, v]);
+              setCidadeFoco(null); setBuscaCidade("");
+            }}
             style={{ padding:"6px 10px", borderRadius:6, fontSize:12, fontWeight:600, cursor:"pointer", maxWidth:320,
-              border:`1.5px solid ${filtroTransp!=="Todos" ? C.laranja : C.cinzaBorda}`,
-              color: filtroTransp!=="Todos" ? C.laranja : C.cinzaTexto }}>
-            <option value="Todos">Todas as transportadoras</option>
+              border:`1.5px solid ${transpSel.length ? C.laranja : C.cinzaBorda}`,
+              color: transpSel.length ? C.laranja : C.cinzaTexto }}>
+            <option value="">+ Adicionar transportadora…</option>
             <optgroup label="Parça">
-              {transportadoras.parca.map(t => (
+              {transportadoras.parca.filter(t=>!transpSel.includes(t.nome)).map(t => (
                 <option key={t.nome} value={t.nome}>{t.nome} ({t.qtdCidades} cidades)</option>
               ))}
             </optgroup>
             <optgroup label="Não Parça">
-              {transportadoras.naoParca.map(t => (
+              {transportadoras.naoParca.filter(t=>!transpSel.includes(t.nome)).map(t => (
                 <option key={t.nome} value={t.nome}>{t.nome} ({t.qtdCidades} cidades)</option>
               ))}
             </optgroup>
           </select>
-          {filtroTransp !== "Todos" && (
-            <button onClick={()=>setFiltroTransp("Todos")}
+          {transpSel.length > 0 && (
+            <>
+              <button onClick={()=>setTranspSel(transportadoras.parca.map(t=>t.nome))}
+                style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+                Todos os Parça
+              </button>
+              <button onClick={()=>setTranspSel([])}
+                style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+                Limpar ({transpSel.length})
+              </button>
+            </>
+          )}
+          {transpSel.length === 0 && (
+            <button onClick={()=>setTranspSel(transportadoras.parca.map(t=>t.nome))}
               style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
-              Limpar
+              Todos os Parça
             </button>
           )}
         </div>
       </div>
 
-      {/* Resumo da transportadora selecionada */}
-      {filtroTransp !== "Todos" && (() => {
-        const t = transportadoras.byName.get(filtroTransp);
-        const volNoFiltro = pontosFiltrados.reduce((s,p) => s + (p.volTransp?.[filtroTransp] || 0), 0);
+      {/* Chips das transportadoras selecionadas */}
+      {transpSel.length > 0 && (
+        <div style={{ display:"flex", gap:6, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+          {transpSel.map(nome => {
+            const t = transportadoras.byName.get(nome);
+            const cor = t?.parca ? C.verde : C.vermelho;
+            return (
+              <span key={nome} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"4px 10px",
+                borderRadius:999, fontSize:12, fontWeight:600, border:`1.5px solid ${cor}`, color:cor, background:`${cor}12` }}>
+                {nome}
+                <button onClick={()=>setTranspSel(prev => prev.filter(x => x !== nome))}
+                  style={{ background:"none", border:"none", cursor:"pointer", color:cor, fontSize:13, lineHeight:1, padding:0 }}>✕</button>
+              </span>
+            );
+          })}
+          <span style={{ fontSize:11, color:C.cinzaTexto }}>
+            (cidades atendidas por <strong>qualquer uma</strong> das selecionadas)
+          </span>
+        </div>
+      )}
+
+      {/* ── Seleção de cidades: importar CSV / zoom / mostrar só selecionadas ── */}
+      <div style={{ display:"flex", gap:10, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+        <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Cidades selecionadas ({cidadesSelecionadas.size}):</span>
+        <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display:"none" }}
+          onChange={e=>{ importarCSV(e.target.files?.[0]); e.target.value = ""; }} />
+        <button onClick={()=>fileRef.current?.click()}
+          style={{ padding:"5px 12px", borderRadius:6, border:`1.5px solid ${C.laranja}`, background:`${C.laranja}12`, color:C.laranja, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          ⬆ Importar CSV de cidades
+        </button>
+        <button onClick={baixarModeloCidades}
+          style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+          Baixar modelo
+        </button>
+        {cidadesSelecionadas.size > 0 && (
+          <>
+            <button onClick={zoomNaSelecao}
+              style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+              🔎 Zoom na seleção
+            </button>
+            <button onClick={()=>setSoSelecionadas(v=>!v)}
+              style={{ padding:"5px 10px", borderRadius:6, fontSize:12, fontWeight:600, cursor:"pointer",
+                border:`1.5px solid ${soSelecionadas ? C.laranja : C.cinzaBorda}`,
+                background: soSelecionadas ? `${C.laranja}18` : "transparent",
+                color: soSelecionadas ? C.laranja : C.cinzaTexto }}>
+              {soSelecionadas ? "✓ Mostrando só as selecionadas" : "Mostrar só as selecionadas"}
+            </button>
+            <button onClick={()=>{ setCidadesSelecionadas(new Map()); setSoSelecionadas(false); setImportInfo(null); }}
+              style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+              Limpar seleção
+            </button>
+          </>
+        )}
+        {importInfo && (
+          <span style={{ fontSize:11, color: importInfo.naoEncontradas.length ? C.amarelo : C.verde, fontWeight:600 }}>
+            {importInfo.ok} cidade(s) adicionada(s)
+            {importInfo.naoEncontradas.length > 0 && (
+              <span title={importInfo.naoEncontradas.join(", ")}>
+                {" "}· {importInfo.naoEncontradas.length} não encontrada(s) na base: {importInfo.naoEncontradas.slice(0,5).join(", ")}
+                {importInfo.naoEncontradas.length > 5 ? "…" : ""}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+
+      {/* Resumo das transportadoras selecionadas */}
+      {transpSel.length > 0 && (() => {
+        const volNoFiltro = pontosFiltrados.reduce(
+          (s,p) => s + transpSel.reduce((a,t) => a + (p.volTransp?.[t] || 0), 0), 0);
         return (
           <div style={{ display:"flex", gap:12, marginBottom:12, flexWrap:"wrap" }}>
             <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
-              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Transportadora</div>
-              <div style={{ fontWeight:700, fontSize:14 }}>{filtroTransp}
-                <span style={{ marginLeft:8, fontSize:11, fontWeight:700, color: t?.parca ? C.verde : C.vermelho }}>
-                  {t?.parca ? "PARÇA" : "NÃO PARÇA"}
+              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Transportadoras selecionadas</div>
+              <div style={{ fontWeight:700, fontSize:18 }}>{transpSel.length}
+                <span style={{ marginLeft:8, fontSize:11, fontWeight:700, color:C.verde }}>
+                  {transpSel.filter(n => transportadoras.byName.get(n)?.parca).length} Parça
+                </span>
+                <span style={{ marginLeft:6, fontSize:11, fontWeight:700, color:C.vermelho }}>
+                  {transpSel.filter(n => !transportadoras.byName.get(n)?.parca).length} não Parça
                 </span>
               </div>
             </div>
@@ -343,7 +528,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
               <div style={{ fontWeight:700, fontSize:18, color:C.laranja }}>{pontosFiltrados.length.toLocaleString("pt-BR")}</div>
             </div>
             <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
-              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Coletas da transportadora</div>
+              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Coletas das transportadoras</div>
               <div style={{ fontWeight:700, fontSize:18 }}>{volNoFiltro.toLocaleString("pt-BR")}</div>
             </div>
             <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
@@ -360,7 +545,8 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
         {filtroRegiao !== "Todas" && <> na região <strong>{filtroRegiao}</strong></>}
         {filtroVal !== "Todos" && <> · validação <strong>{filtroVal}</strong></>}
         {filtroColetas > 0 && <> · mín. <strong>{filtroColetas}</strong> coletas Parça</>}
-        {filtroTransp !== "Todos" && <> · atendidas por <strong>{filtroTransp}</strong></>}
+        {transpSel.length > 0 && <> · atendidas por <strong>{transpSel.length === 1 ? transpSel[0] : `${transpSel.length} transportadoras`}</strong></>}
+        {soSelecionadas && <> · <strong>somente as selecionadas</strong></>}
       </div>
 
       {/* ── Mapa Leaflet ── */}
@@ -388,6 +574,9 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
           {/* Zoom automático nas cidades da transportadora filtrada */}
           {!cidadeFoco && boundsTransp && <ZoomRegion bounds={boundsTransp} />}
+
+          {/* Zoom no conjunto de cidades selecionadas / importadas */}
+          {!cidadeFoco && boundsSelecao && <ZoomRegion bounds={boundsSelecao} />}
 
           {/* Zoom na cidade buscada */}
           {cidadeFoco && <FlyToCidade ponto={cidadeFoco} />}
@@ -463,7 +652,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
             <div>
               <div style={{ fontWeight:700, fontSize:14 }}>📋 Cidades selecionadas ({cidadesSelecionadas.size})</div>
-              <div style={{ fontSize:11, color:C.cinzaTexto }}>Clique em "Exportar" para baixar como CSV, ou clique numa cidade do mapa para remover</div>
+              <div style={{ fontSize:11, color:C.cinzaTexto }}>Adicione clicando no mapa, pelo buscador ou importando um CSV · clique de novo na cidade do mapa para remover</div>
             </div>
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={()=>setCidadesSelecionadas(new Map())}
