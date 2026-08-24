@@ -343,7 +343,6 @@ export default function WeeklyApp() {
         "slaWeekly","slaPd","csatParsed","csatDadosImportados","csatSemanasTrav",
       ]);
 
-      const pdRaw= lerLS("slaParca_pd",{});
       // SLA — busca direto do backend (data/slaBruto.csv no GitHub, via
       // api/sla.js), a mesma fonte que a aba Performance Coleta usa. Isso
       // substitui a leitura antiga de IndexedDB (slaParcaDB), que ficou sem
@@ -385,6 +384,32 @@ export default function WeeklyApp() {
         return { s, mes: semMes[s]||null, meses: [...semMesSet[s]] };
       });
       setWeekly(wEnriq.sort((a,b)=>a.s-b.s));
+      // "Por parceiro / semana" derivado do CSV do servidor. Antes vinha do
+      // cache local "slaParca_pd" (localStorage), que só existia no navegador
+      // de quem importava o CSV na aba Performance — por isso o Weekly ficava
+      // sem o detalhe por parceiro pra todo mundo mais.
+      const pdRaw = {};
+      {
+        const coletadoPd = rows.filter(r=>r["Flag Situacao Coleta"]==="Coletado");
+        const porParceiroSemana = new Map();
+        coletadoPd.forEach(r=>{
+          const parc = r["Transportadora"];
+          const sem  = parseInt(r["semana_Efetivada"]||r["Semana_Efetivada"]||0);
+          if(!parc || !sem) return;
+          const k = `${parc}||${sem}`;
+          if(!porParceiroSemana.has(k)) porParceiroSemana.set(k, []);
+          porParceiroSemana.get(k).push(r);
+        });
+        porParceiroSemana.forEach((linhas, k)=>{
+          const [parc, semStr] = k.split("||");
+          if(linhas.length < 3) return;              // mesma regra mínima da aba Performance
+          const d = calcFromRawRows(linhas);
+          if(!d) return;
+          if(!pdRaw[parc]) pdRaw[parc] = {};
+          pdRaw[parc][parseInt(semStr)] = d;
+        });
+      }
+
       // Canonicaliza as chaves de pd (nome do parceiro), mesclando semanas quando dois nomes
       // diferentes na base caírem no mesmo nome canônico
       const pdCanon = {};
@@ -403,12 +428,56 @@ export default function WeeklyApp() {
         if(wEnriq.length>1) setSelAnt(wEnriq[wEnriq.length-2].s);
       }
 
-      // CSAT
+      // ── CSAT ───────────────────────────────────────────────────────────────
+      // Fonte oficial: data/csatAgregados.json no servidor (via api/csat.js),
+      // publicado pela aba CSAT. Antes isso vinha de IndexedDB/localStorage
+      // ("csat_semanas_travadas"), que só existia no navegador de quem travava
+      // as semanas — por isso o bloco de CSAT do Weekly ficava vazio para os
+      // outros colaboradores. IDB e localStorage seguem apenas como fallback
+      // para quem abrir antes do primeiro publish.
       let csatSlim = null;
       let csatPP = {};
 
-      // Tenta IDB primeiro
-      const csatIDB = await lerIDB("csatParcaDB","dados","parsed");
+      const acumulaPorParceiro = (lista) => {
+        (lista||[]).forEach(semObj=>{
+          const parcsData = semObj.parceiros||semObj.porParceiro||semObj.byPartner||[];
+          if(!Array.isArray(parcsData)) return;
+          parcsData.forEach(pc=>{
+            const nome = pc.nome||pc.parceiro||pc.name||pc.label;
+            if(!nome) return;
+            if(!csatPP[nome]) csatPP[nome]={semanas:[]};
+            csatPP[nome].semanas.push({
+              semana: semObj.semana, mes: semObj.mes,
+              share: pc.share!=null ? pc.share : (pc.notas45&&pc.total ? pc.notas45/pc.total : null),
+              respostas: pc.respostas||pc.total||0
+            });
+          });
+        });
+      };
+
+      try {
+        const rCsat = await fetch("/api/csat");
+        if (rCsat.ok) {
+          const dataCsat = await rCsat.json();
+          const ag = dataCsat?.agregados;
+          // Prioridade: snapshot semanal completo; se não houver, as travas.
+          const listaServidor = Array.isArray(ag?.porSemana) && ag.porSemana.length
+            ? ag.porSemana
+            : Object.values(ag?.travadas || {});
+          if (listaServidor.length) {
+            const anoCsat = ag?.anoAtual || new Date().getFullYear();
+            const obj = {};
+            listaServidor.forEach(p=>{ if(p.semana) obj[`${anoCsat}_W${p.semana}`] = p.slim || p; });
+            csatSlim = obj;
+            acumulaPorParceiro(listaServidor);
+          }
+        }
+      } catch (e) {
+        console.warn("Weekly: não consegui buscar o CSAT do servidor:", e);
+      }
+
+      // Fallback 1: IDB local
+      const csatIDB = csatSlim ? null : await lerIDB("csatParcaDB","dados","parsed");
       if(csatIDB?.porSemana){
         const obj = {};
         csatIDB.porSemana.forEach(p=>{ if(p.semana) obj[`${csatIDB.anoAtual||new Date().getFullYear()}_W${p.semana}`]=p.slim||p; });
@@ -428,8 +497,8 @@ export default function WeeklyApp() {
         });
       }
 
-      // Fallback: localStorage csat_semanas_travadas
-      const csatLS = lerLS("csat_semanas_travadas", {});
+      // Fallback 2: localStorage legado (csat_semanas_travadas)
+      const csatLS = csatSlim ? {} : lerLS("csat_semanas_travadas", {});
       const csatArr = Array.isArray(csatLS) ? csatLS : Object.values(csatLS);
 
       if(!csatSlim){
