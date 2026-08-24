@@ -36,6 +36,12 @@ const ARQUIVO_ATUAL_META = 'data/abrangenciaAtualMeta.json';
 const ARQUIVO_ANTERIOR = 'data/abrangenciaAnterior.csv';
 const ARQUIVO_ANTERIOR_META = 'data/abrangenciaAnteriorMeta.json';
 const ARQUIVO_HISTORICO = 'data/historicoAbrangencia.json';
+// Distribuição atual (cidade ↔ transportadora ↔ é Parça hoje) usada pela aba
+// Simulação. Antes ficava só em IndexedDB, por navegador — a simulação aparecia
+// vazia para todo mundo que não fosse quem importou. Agora fica no repositório,
+// no mesmo padrão das bases de abrangência.
+const ARQUIVO_DIST = 'data/distribuicaoAtual.csv';
+const ARQUIVO_DIST_META = 'data/distribuicaoAtualMeta.json';
 
 async function handleGet(req, res) {
   const { token, owner, repo, branch } = credenciaisGithub();
@@ -69,6 +75,21 @@ async function handleGet(req, res) {
     return res.status(500).json({ error: 'Erro ao ler a base de Abrangência no GitHub.', detail: String(e.message || e) });
   }
 
+  let distCSV = null;
+  let distNome = null;
+  let distData = null;
+  try {
+    distCSV = await lerArquivoGithubGrande({ owner, repo, branch, token, caminho: ARQUIVO_DIST });
+    const distMetaTexto = await lerArquivoGithub({ owner, repo, branch, token, caminho: ARQUIVO_DIST_META });
+    if (distMetaTexto) {
+      const meta = JSON.parse(distMetaTexto);
+      distNome = meta.nome || null;
+      distData = meta.importadoEm || null;
+    }
+  } catch {
+    // distribuição ausente não deve quebrar a leitura das bases
+  }
+
   let historico = [];
   try {
     const historicoTexto = await lerArquivoGithub({ owner, repo, branch, token, caminho: ARQUIVO_HISTORICO });
@@ -80,8 +101,35 @@ async function handleGet(req, res) {
   return res.status(200).json({
     atualCSV, atualNome, atualData,
     anteriorCSV, anteriorNome, anteriorData,
+    distCSV, distNome, distData,
     historico,
   });
+}
+
+// Salva a distribuição atual (CSV Estado, Cidade, Transportadora, Parça).
+// Não mexe em atual/anterior — é uma base independente.
+async function handleImportarDistribuicao(req, res, csv, nome) {
+  const { token, owner, repo, branch } = credenciaisGithub();
+  if (!token || !owner || !repo) {
+    return res.status(500).json({ error: 'Configure GITHUB_TOKEN, GITHUB_OWNER e GITHUB_REPO no ambiente do Vercel.' });
+  }
+  try {
+    await commitArquivoGrande({ owner, repo, branch, token, caminho: ARQUIVO_DIST, conteudo: csv });
+    await commitArquivo({
+      owner, repo, branch, token,
+      caminho: ARQUIVO_DIST_META,
+      conteudo: JSON.stringify({
+        nome: nome || 'distribuicao-atual.csv',
+        importadoEm: new Date().toISOString(),
+      }, null, 2),
+    });
+    return res.status(200).json({
+      ok: true,
+      mensagem: 'Distribuição atual publicada. A simulação passa a valer para todos os colaboradores em ~1 minuto (redeploy do Vercel).',
+    });
+  } catch (e) {
+    return res.status(502).json({ error: 'Erro ao salvar a distribuição atual no GitHub.', detail: String(e.message || e) });
+  }
 }
 
 async function handleImportar(req, res, csv, nome) {
@@ -163,8 +211,9 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const body = req.body || {};
     if (body.admin !== undefined) return handleLimparHistorico(req, res, body.admin);
+    if (typeof body.distribuicao === 'string') return handleImportarDistribuicao(req, res, body.distribuicao, body.nome);
     if (typeof body.csv === 'string') return handleImportar(req, res, body.csv, body.nome);
-    return res.status(400).json({ error: 'Requisição inválida — envie {csv,nome} para importar ou {admin} para limpar o histórico.' });
+    return res.status(400).json({ error: 'Requisição inválida — envie {csv,nome} para importar a abrangência, {distribuicao,nome} para a distribuição atual, ou {admin} para limpar o histórico.' });
   }
 
   return res.status(405).json({ error: 'Método não suportado.' });
