@@ -86,8 +86,9 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
   const [incluirSemParca, setIncluirSemParca] = useState(false);
 
   // Filtro por raio (km) a partir das cidades selecionadas
-  const [raioAtivo, setRaioAtivo] = useState(false);
-  const [raioKm,    setRaioKm]    = useState(100);
+  const [raioAtivo,     setRaioAtivo]     = useState(false);
+  const [raioKm,        setRaioKm]        = useState(100);
+  const [centroRaioKey, setCentroRaioKey] = useState(null); // "uf|cidade" — centro único do raio
 
   // Buscador de cidades
   const [buscaCidade,   setBuscaCidade]   = useState("");
@@ -177,11 +178,21 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
   }, [rows]);
 
   // ── Aplica filtros ──────────────────────────────────────────────────────────
-  // Centros do raio = cidades selecionadas com coordenada
-  const centrosRaio = useMemo(
+  // Cidades selecionadas que têm coordenada (candidatas a centro do raio)
+  const cidadesComCoord = useMemo(
     () => [...cidadesSelecionadas.values()].filter(c => c.lat != null && c.lon != null),
     [cidadesSelecionadas]
   );
+
+  // Centro ÚNICO do raio: o escolhido no select; se não houver escolha válida,
+  // cai na primeira cidade selecionada. Nunca mais de um círculo.
+  const centroRaio = useMemo(() => {
+    if (!cidadesComCoord.length) return null;
+    const escolhido = centroRaioKey
+      ? cidadesComCoord.find(c => `${c.uf}|${c.cidade}` === centroRaioKey)
+      : null;
+    return escolhido || cidadesComCoord[0];
+  }, [cidadesComCoord, centroRaioKey]);
 
   const pontosFiltrados = useMemo(() => {
     const ufsRegiao = regioesSel.length
@@ -195,8 +206,8 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
       if (ufsRegiao && !ufsRegiao.has(p.uf))                  return false;
       if (soSelecionadas && !cidadesSelecionadas.has(`${p.uf}|${p.cidade}`)) return false;
-      if (raioAtivo && centrosRaio.length &&
-          !centrosRaio.some(c => distanciaKm(c.lat, c.lon, p.lat, p.lon) <= raioKm)) return false;
+      if (raioAtivo && centroRaio &&
+          distanciaKm(centroRaio.lat, centroRaio.lon, p.lat, p.lon) > raioKm) return false;
 
       if (!bypass) {
         if (filtroVal === "PARÇA"     && !p.temParca)           return false;
@@ -207,7 +218,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       return true;
     });
   }, [pontos, filtroVal, regioesSel, filtroColetas, transpSel, soSelecionadas,
-      cidadesSelecionadas, incluirSemParca, raioAtivo, raioKm, centrosRaio]);
+      cidadesSelecionadas, incluirSemParca, raioAtivo, raioKm, centroRaio]);
 
   // Cidades visíveis (para o datalist do buscador)
   const opcoesBusca = useMemo(
@@ -249,7 +260,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
   // ── Distâncias entre as cidades selecionadas ───────────────────────────────
   const distancias = useMemo(() => {
-    const v = centrosRaio;
+    const v = cidadesComCoord;
     if (v.length < 2) return [];
     const pares = [];
     for (let i = 0; i < v.length; i++) {
@@ -263,7 +274,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       }
     }
     return pares.sort((x, y) => x.km - y.km);
-  }, [centrosRaio]);
+  }, [cidadesComCoord]);
 
   // ── Importação de cidades por CSV ──────────────────────────────────────────
   // Aceita colunas de cidade (Cidade / Municipio / Logistica Reversa Cidade) e,
@@ -411,7 +422,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           ))}
         </div>
 
-        <button onClick={()=>{ setFiltroVal("Todos"); setRegioesSel([]); setFiltroColetas(0); setTranspSel([]); setIncluirSemParca(false); setRaioAtivo(false); setBuscaCidade(""); setCidadeFoco(null); setSoSelecionadas(false); setBoundsSelecao(null); setResetKey(k=>k+1); }}
+        <button onClick={()=>{ setFiltroVal("Todos"); setRegioesSel([]); setFiltroColetas(0); setTranspSel([]); setIncluirSemParca(false); setRaioAtivo(false); setCentroRaioKey(null); setBuscaCidade(""); setCidadeFoco(null); setSoSelecionadas(false); setBoundsSelecao(null); setResetKey(k=>k+1); }}
           style={{ marginLeft:"auto", padding:"5px 12px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
           Resetar
         </button>
@@ -582,8 +593,33 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
         {[50, 100, 200, 300].map(v => (
           <button key={v} onClick={()=>{ setRaioKm(v); setRaioAtivo(true); }} style={pill(raioAtivo && raioKm===v)}>{v} km</button>
         ))}
-        {centrosRaio.length === 0 && (
-          <span style={{ fontSize:11, color:C.cinzaTexto }}>selecione ao menos uma cidade para usar como centro</span>
+
+        <div style={{ width:1, height:24, background:C.cinzaBorda }} />
+
+        <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Centro do raio:</span>
+        <select
+          value={centroRaio ? `${centroRaio.uf}|${centroRaio.cidade}` : ""}
+          onChange={e=>setCentroRaioKey(e.target.value || null)}
+          disabled={!cidadesComCoord.length}
+          style={{ padding:"5px 10px", borderRadius:6, fontSize:12, fontWeight:600, maxWidth:260,
+            cursor: cidadesComCoord.length ? "pointer" : "not-allowed",
+            border:`1.5px solid ${raioAtivo && centroRaio ? C.laranja : C.cinzaBorda}`,
+            color: raioAtivo && centroRaio ? C.laranja : C.cinzaTexto }}>
+          {!cidadesComCoord.length && <option value="">(selecione uma cidade)</option>}
+          {cidadesComCoord
+            .slice()
+            .sort((a,b)=>a.cidade.localeCompare(b.cidade))
+            .map(c => (
+              <option key={`${c.uf}|${c.cidade}`} value={`${c.uf}|${c.cidade}`}>{c.cidade} - {c.uf}</option>
+            ))}
+        </select>
+        {!cidadesComCoord.length && (
+          <span style={{ fontSize:11, color:C.cinzaTexto }}>selecione uma cidade para usar como centro</span>
+        )}
+        {cidadesComCoord.length > 1 && (
+          <span style={{ fontSize:11, color:C.cinzaTexto }}>
+            o raio usa só o centro escolhido — as outras {cidadesComCoord.length - 1} cidades seguem na lista e nas distâncias
+          </span>
         )}
       </div>
 
@@ -670,7 +706,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
         {transpSel.length > 0 && <> · atendidas por <strong>{transpSel.length === 1 ? transpSel[0] : `${transpSel.length} transportadoras`}</strong></>}
         {soSelecionadas && <> · <strong>somente as selecionadas</strong></>}
         {incluirSemParca && <> · incluindo <strong>cidades sem Parça</strong></>}
-        {raioAtivo && centrosRaio.length > 0 && <> · dentro de <strong>{raioKm} km</strong> de {centrosRaio.length} cidade(s) selecionada(s)</>}
+        {raioAtivo && centroRaio && <> · dentro de <strong>{raioKm} km</strong> de <strong>{centroRaio.cidade} - {centroRaio.uf}</strong></>}
       </div>
 
       {/* ── Mapa Leaflet ── */}
@@ -705,13 +741,13 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           {/* Zoom na cidade buscada */}
           {cidadeFoco && <FlyToCidade ponto={cidadeFoco} />}
 
-          {/* Círculos do raio a partir das cidades selecionadas */}
-          {raioAtivo && centrosRaio.map((c,i) => (
-            <Circle key={`raio-${c.uf}-${c.cidade}-${i}`}
-              center={[c.lat, c.lon]} radius={raioKm * 1000}
+          {/* Círculo único do raio, no centro escolhido */}
+          {raioAtivo && centroRaio && (
+            <Circle key={`raio-${centroRaio.uf}-${centroRaio.cidade}`}
+              center={[centroRaio.lat, centroRaio.lon]} radius={raioKm * 1000}
               pathOptions={{ color: C.laranja, weight: 1.5, fillColor: C.laranja, fillOpacity: 0.06, dashArray: "4 6" }}
               interactive={false} />
-          ))}
+          )}
 
           {/* Linha ligando duas cidades selecionadas, com a distância */}
           {distancias.length === 1 && (
