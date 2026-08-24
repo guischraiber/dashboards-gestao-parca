@@ -2223,6 +2223,9 @@ function baixarModeloDistribuicao() {
 // cidade conta como Parça simulado. Cruzar por transportadora specífica deixava de
 // creditar cidades onde a transportadora antiga (não-Parça) foi totalmente trocada
 // pela atual (Parça), já que a antiga nunca aparece na distribuição de hoje.
+// UFs onde a operação não vende mais (default do filtro da simulação)
+const UFS_SEM_VENDA = ["PA", "MA", "TO", "PI"];
+
 function calcularSimulacao(rowsAno, rosterAtual) {
   let totalReal = 0, parcaReal = 0, parcaSimulado = 0;
   const porCidade = new Map();
@@ -2687,10 +2690,32 @@ export default function AbrangenciaApp() {
     return s;
   }, [distribuicaoAtual]);
 
+  // UFs excluídas da simulação (estados onde não vendemos mais)
+  const [ufsExcluidasSim, setUfsExcluidasSim] = useState([]);
+
+  const ufsSimDisponiveis = useMemo(() => {
+    if (!atual) return [];
+    return [...new Set(atual.rows.map(r => r.estado))].filter(Boolean).sort();
+  }, [atual]);
+
+  const rowsSimulacao = useMemo(() => {
+    if (!atual) return [];
+    if (!ufsExcluidasSim.length) return atual.rows;
+    return atual.rows.filter(r => !ufsExcluidasSim.includes(r.estado));
+  }, [atual, ufsExcluidasSim]);
+
+  // Volume removido pelo filtro, pra mostrar o impacto na tela
+  const volExcluidoSim = useMemo(() => {
+    if (!atual || !ufsExcluidasSim.length) return 0;
+    return atual.rows
+      .filter(r => ufsExcluidasSim.includes(r.estado))
+      .reduce((s, r) => s + r.abrangencia, 0);
+  }, [atual, ufsExcluidasSim]);
+
   const simulacao = useMemo(() => {
     if (!atual || !distribuicaoAtual) return null;
-    return calcularSimulacao(atual.rows, rosterAtual);
-  }, [atual, distribuicaoAtual, rosterAtual]);
+    return calcularSimulacao(rowsSimulacao, rosterAtual);
+  }, [atual, distribuicaoAtual, rosterAtual, rowsSimulacao]);
 
   const sq = (s) => ({ padding:"6px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", background:"transparent", color:C.cinzaTexto });
 
@@ -3267,6 +3292,53 @@ export default function AbrangenciaApp() {
               {distribuicaoAtual && (
                 <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:16 }}>
                   Distribuição atual: <strong>{distribuicaoAtual.nome}</strong> · importada em {new Date(distribuicaoAtual.data).toLocaleString("pt-BR")} · {distribuicaoAtual.rows.length} vínculo(s) cidade↔transportadora mapeado(s), sendo {distribuicaoAtual.rows.filter(r=>r.souParca).length} marcado(s) como Parça
+                </div>
+              )}
+
+              {/* ── Filtro: estados onde não vendemos mais ── */}
+              {atual && (
+                <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:10, padding:"12px 14px", marginBottom:16 }}>
+                  <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                    <span style={{ fontSize:12, fontWeight:700, color:C.cinzaTexto }}>Estados fora da simulação:</span>
+                    <Pill
+                      ativo={UFS_SEM_VENDA.every(u => ufsExcluidasSim.includes(u)) && ufsExcluidasSim.length > 0}
+                      onClick={() => setUfsExcluidasSim(prev =>
+                        UFS_SEM_VENDA.every(u => prev.includes(u))
+                          ? prev.filter(u => !UFS_SEM_VENDA.includes(u))
+                          : [...new Set([...prev, ...UFS_SEM_VENDA.filter(u => ufsSimDisponiveis.includes(u))])]
+                      )}>
+                      Excluir estados sem venda (PA, MA, TO, PI)
+                    </Pill>
+                    <select value="" onChange={e=>{
+                        const v = e.target.value;
+                        if (!v) return;
+                        setUfsExcluidasSim(prev => prev.includes(v) ? prev : [...prev, v]);
+                      }}
+                      style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, fontSize:12, fontWeight:600, cursor:"pointer", color:C.cinzaTexto }}>
+                      <option value="">+ Excluir outro estado…</option>
+                      {ufsSimDisponiveis.filter(u => !ufsExcluidasSim.includes(u)).map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    {ufsExcluidasSim.length > 0 && (
+                      <button onClick={()=>setUfsExcluidasSim([])} style={sq()}>Limpar exclusões</button>
+                    )}
+                  </div>
+                  {ufsExcluidasSim.length > 0 && (
+                    <div style={{ display:"flex", gap:6, marginTop:10, flexWrap:"wrap", alignItems:"center" }}>
+                      {ufsExcluidasSim.map(u => (
+                        <span key={u} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"3px 9px", borderRadius:999,
+                          fontSize:12, fontWeight:700, border:`1.5px solid ${C.vermelho}`, color:C.vermelho, background:`${C.vermelho}12` }}>
+                          {u}
+                          <button onClick={()=>setUfsExcluidasSim(prev => prev.filter(x => x !== u))}
+                            style={{ background:"none", border:"none", cursor:"pointer", color:C.vermelho, fontSize:13, lineHeight:1, padding:0 }}>✕</button>
+                        </span>
+                      ))}
+                      <span style={{ fontSize:11, color:C.cinzaTexto }}>
+                        {volExcluidoSim.toLocaleString("pt-BR")} coletas fora do cálculo
+                        {" "}({totalGeralAbrangencia > 0 ? (volExcluidoSim/totalGeralAbrangencia*100).toFixed(1) : 0}% do total) ·
+                        {" "}{rowsSimulacao.length.toLocaleString("pt-BR")} de {atual.rows.length.toLocaleString("pt-BR")} linhas consideradas
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
 
