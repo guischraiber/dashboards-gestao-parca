@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import Papa from "papaparse";
-import { MapContainer, TileLayer, GeoJSON, CircleMarker, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, GeoJSON, CircleMarker, Circle, Polyline, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 const C = {
@@ -50,6 +50,16 @@ function FlyToCidade({ ponto }) {
   return null;
 }
 
+// Distância em km entre dois pontos (Haversine)
+function distanciaKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const rad = (x) => (x * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLon = rad(lon2 - lon1);
+  const h = Math.sin(dLat/2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon/2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
 // Normaliza texto para busca (sem acento, minúsculo)
 function normTxt(s) {
   return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -57,7 +67,7 @@ function normTxt(s) {
 
 export default function MapaAbrangencia({ rows, coordCidades }) {
   const [filtroVal,     setFiltroVal]     = useState("Todos");
-  const [filtroRegiao,  setFiltroRegiao]  = useState("Todas");
+  const [regioesSel,    setRegioesSel]    = useState([]);   // múltiplas regiões (vazio = todas)
   const [filtroColetas, setFiltroColetas] = useState(0);   // Mínimo de coletas Parça
   const [ufFoco,        setUfFoco]        = useState(null);
   const [resetKey,      setResetKey]      = useState(0);
@@ -71,6 +81,13 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
   // Mostrar no mapa somente as cidades da lista selecionada
   const [soSelecionadas, setSoSelecionadas] = useState(false);
+
+  // Mostrar também as cidades sem nenhum Parça (visão de expansão)
+  const [incluirSemParca, setIncluirSemParca] = useState(false);
+
+  // Filtro por raio (km) a partir das cidades selecionadas
+  const [raioAtivo, setRaioAtivo] = useState(false);
+  const [raioKm,    setRaioKm]    = useState(100);
 
   // Buscador de cidades
   const [buscaCidade,   setBuscaCidade]   = useState("");
@@ -160,18 +177,37 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
   }, [rows]);
 
   // ── Aplica filtros ──────────────────────────────────────────────────────────
+  // Centros do raio = cidades selecionadas com coordenada
+  const centrosRaio = useMemo(
+    () => [...cidadesSelecionadas.values()].filter(c => c.lat != null && c.lon != null),
+    [cidadesSelecionadas]
+  );
+
   const pontosFiltrados = useMemo(() => {
-    const ufsRegiao = filtroRegiao !== "Todas" ? REGIOES[filtroRegiao] : null;
+    const ufsRegiao = regioesSel.length
+      ? new Set(regioesSel.flatMap(r => REGIOES[r] || []))
+      : null;
     return pontos.filter(p => {
-      if (filtroVal === "PARÇA"     && !p.temParca)           return false;
-      if (filtroVal === "NÃO PARÇA" && p.temParca)            return false;
-      if (ufsRegiao && !ufsRegiao.includes(p.uf))             return false;
-      if (p.coletasParca < filtroColetas)                     return false;
-      if (transpSel.length && !transpSel.some(t => p.transpTodas.has(t))) return false;
+      // "Incluir cidades sem Parça" mantém visíveis as cidades de expansão
+      // (0 coleta Parça) mesmo quando há filtro de validação/transportadora
+      const semParca = p.coletasParca === 0;
+      const bypass = incluirSemParca && semParca;
+
+      if (ufsRegiao && !ufsRegiao.has(p.uf))                  return false;
       if (soSelecionadas && !cidadesSelecionadas.has(`${p.uf}|${p.cidade}`)) return false;
+      if (raioAtivo && centrosRaio.length &&
+          !centrosRaio.some(c => distanciaKm(c.lat, c.lon, p.lat, p.lon) <= raioKm)) return false;
+
+      if (!bypass) {
+        if (filtroVal === "PARÇA"     && !p.temParca)           return false;
+        if (filtroVal === "NÃO PARÇA" && p.temParca)            return false;
+        if (p.coletasParca < filtroColetas)                     return false;
+        if (transpSel.length && !transpSel.some(t => p.transpTodas.has(t))) return false;
+      }
       return true;
     });
-  }, [pontos, filtroVal, filtroRegiao, filtroColetas, transpSel, soSelecionadas, cidadesSelecionadas]);
+  }, [pontos, filtroVal, regioesSel, filtroColetas, transpSel, soSelecionadas,
+      cidadesSelecionadas, incluirSemParca, raioAtivo, raioKm, centrosRaio]);
 
   // Cidades visíveis (para o datalist do buscador)
   const opcoesBusca = useMemo(
@@ -210,6 +246,24 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
     setBoundsSelecao([[Math.min(...lats)-0.6, Math.min(...lons)-0.6], [Math.max(...lats)+0.6, Math.max(...lons)+0.6]]);
     setCidadeFoco(null);
   }, [cidadesSelecionadas]);
+
+  // ── Distâncias entre as cidades selecionadas ───────────────────────────────
+  const distancias = useMemo(() => {
+    const v = centrosRaio;
+    if (v.length < 2) return [];
+    const pares = [];
+    for (let i = 0; i < v.length; i++) {
+      for (let j = i + 1; j < v.length; j++) {
+        pares.push({
+          a: `${v[i].cidade} - ${v[i].uf}`,
+          b: `${v[j].cidade} - ${v[j].uf}`,
+          latA: v[i].lat, lonA: v[i].lon, latB: v[j].lat, lonB: v[j].lon,
+          km: distanciaKm(v[i].lat, v[i].lon, v[j].lat, v[j].lon),
+        });
+      }
+    }
+    return pares.sort((x, y) => x.km - y.km);
+  }, [centrosRaio]);
 
   // ── Importação de cidades por CSV ──────────────────────────────────────────
   // Aceita colunas de cidade (Cidade / Municipio / Logistica Reversa Cidade) e,
@@ -272,13 +326,13 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
   // Bounds da região selecionada para zoom automático
   const boundsRegiao = useMemo(() => {
-    if (filtroRegiao === "Todas") return null;
+    if (!regioesSel.length) return null;
     const pts = pontosFiltrados;
     if (!pts.length) return null;
     const lats = pts.map(p => p.lat);
     const lons = pts.map(p => p.lon);
     return [[Math.min(...lats)-1, Math.min(...lons)-1], [Math.max(...lats)+1, Math.max(...lons)+1]];
-  }, [filtroRegiao, pontosFiltrados]);
+  }, [regioesSel, pontosFiltrados]);
 
   const ufsDisponiveis = useMemo(() => [...new Set(rows.map(r=>r.estado))].sort(), [rows]);
 
@@ -326,15 +380,22 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           {["Todos","PARÇA","NÃO PARÇA"].map(v=>(
             <button key={v} onClick={()=>setFiltroVal(v)} style={pill(filtroVal===v)}>{v}</button>
           ))}
+          <button onClick={()=>setIncluirSemParca(v=>!v)} style={pill(incluirSemParca)}
+            title="Mantém no mapa as cidades sem nenhum Parça, mesmo com filtro de validação ou transportadora ativo">
+            + cidades sem Parça (expansão)
+          </button>
         </div>
 
         <div style={{ width:1, height:24, background:C.cinzaBorda }} />
 
-        {/* Região */}
-        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-          <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Região:</span>
-          {["Todas","Norte","Nordeste","Centro-Oeste","Sudeste","Sul"].map(r=>(
-            <button key={r} onClick={()=>{ setFiltroRegiao(r); setResetKey(k=>k+1); }} style={pill(filtroRegiao===r)}>{r}</button>
+        {/* Região — múltipla seleção (clique pra somar/remover) */}
+        <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Regiões:</span>
+          <button onClick={()=>{ setRegioesSel([]); setResetKey(k=>k+1); }} style={pill(regioesSel.length===0)}>Todas</button>
+          {["Norte","Nordeste","Centro-Oeste","Sudeste","Sul"].map(r=>(
+            <button key={r}
+              onClick={()=>{ setRegioesSel(prev => prev.includes(r) ? prev.filter(x=>x!==r) : [...prev, r]); setResetKey(k=>k+1); }}
+              style={pill(regioesSel.includes(r))}>{r}</button>
           ))}
         </div>
 
@@ -350,7 +411,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           ))}
         </div>
 
-        <button onClick={()=>{ setFiltroVal("Todos"); setFiltroRegiao("Todas"); setFiltroColetas(0); setTranspSel([]); setBuscaCidade(""); setCidadeFoco(null); setSoSelecionadas(false); setBoundsSelecao(null); setResetKey(k=>k+1); }}
+        <button onClick={()=>{ setFiltroVal("Todos"); setRegioesSel([]); setFiltroColetas(0); setTranspSel([]); setIncluirSemParca(false); setRaioAtivo(false); setBuscaCidade(""); setCidadeFoco(null); setSoSelecionadas(false); setBoundsSelecao(null); setResetKey(k=>k+1); }}
           style={{ marginLeft:"auto", padding:"5px 12px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
           Resetar
         </button>
@@ -506,6 +567,67 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
         )}
       </div>
 
+      {/* ── Raio de distância a partir das cidades selecionadas ── */}
+      <div style={{ display:"flex", gap:10, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+        <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Raio de distância:</span>
+        <button onClick={()=>setRaioAtivo(v=>!v)} style={pill(raioAtivo)}
+          title="Filtra as cidades que estão dentro do raio a partir das cidades selecionadas">
+          {raioAtivo ? "✓ Filtro de raio ativo" : "Ativar filtro de raio"}
+        </button>
+        <input type="number" min={1} max={3000} step={10} value={raioKm}
+          onChange={e=>setRaioKm(Math.max(1, Number(e.target.value) || 0))}
+          style={{ width:90, padding:"5px 8px", borderRadius:6, fontSize:12, fontWeight:600,
+            border:`1.5px solid ${raioAtivo ? C.laranja : C.cinzaBorda}` }} />
+        <span style={{ fontSize:12, color:C.cinzaTexto }}>km</span>
+        {[50, 100, 200, 300].map(v => (
+          <button key={v} onClick={()=>{ setRaioKm(v); setRaioAtivo(true); }} style={pill(raioAtivo && raioKm===v)}>{v} km</button>
+        ))}
+        {centrosRaio.length === 0 && (
+          <span style={{ fontSize:11, color:C.cinzaTexto }}>selecione ao menos uma cidade para usar como centro</span>
+        )}
+      </div>
+
+      {/* ── Distâncias entre as cidades selecionadas ── */}
+      {distancias.length > 0 && (
+        <div style={{ background:C.cinzaCard, border:`1px solid ${C.cinzaBorda}`, borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>
+            📐 Distância entre as cidades selecionadas
+            {distancias.length > 1 && <span style={{ fontSize:11, fontWeight:600, color:C.cinzaTexto }}> · {distancias.length} pares, do mais próximo ao mais distante</span>}
+          </div>
+          {distancias.length === 1 ? (
+            <div style={{ fontSize:14 }}>
+              <strong>{distancias[0].a}</strong> ↔ <strong>{distancias[0].b}</strong>
+              <span style={{ marginLeft:10, fontSize:20, fontWeight:700, color:C.laranja }}>{distancias[0].km.toFixed(1)} km</span>
+              <span style={{ marginLeft:8, fontSize:11, color:C.cinzaTexto }}>(linha reta)</span>
+            </div>
+          ) : (
+            <div style={{ maxHeight:220, overflowY:"auto" }}>
+              <table style={{ width:"100%", fontSize:12, borderCollapse:"collapse" }}>
+                <thead style={{ position:"sticky", top:0, background:C.cinzaFundo }}>
+                  <tr style={{ textAlign:"left", color:C.cinzaTexto }}>
+                    <th style={{ padding:"5px 8px" }}>Cidade A</th>
+                    <th style={{ padding:"5px 8px" }}>Cidade B</th>
+                    <th style={{ padding:"5px 8px", textAlign:"right" }}>Distância (km)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {distancias.slice(0, 200).map((d,i)=>(
+                    <tr key={i} style={{ borderTop:`1px solid ${C.cinzaBorda}` }}>
+                      <td style={{ padding:"4px 8px" }}>{d.a}</td>
+                      <td style={{ padding:"4px 8px" }}>{d.b}</td>
+                      <td style={{ padding:"4px 8px", textAlign:"right", fontWeight:700, color:C.laranja }}>{d.km.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {distancias.length > 200 && (
+                <div style={{ fontSize:11, color:C.cinzaTexto, marginTop:6 }}>Mostrando os 200 pares mais próximos de {distancias.length}.</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Resumo das transportadoras selecionadas */}
       {transpSel.length > 0 && (() => {
         const volNoFiltro = pontosFiltrados.reduce(
@@ -542,11 +664,13 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       {/* Contagem de pontos visíveis */}
       <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:10 }}>
         Exibindo <strong>{pontosFiltrados.length.toLocaleString("pt-BR")}</strong> de {pontos.length.toLocaleString("pt-BR")} cidades
-        {filtroRegiao !== "Todas" && <> na região <strong>{filtroRegiao}</strong></>}
+        {regioesSel.length > 0 && <> nas regiões <strong>{regioesSel.join(", ")}</strong></>}
         {filtroVal !== "Todos" && <> · validação <strong>{filtroVal}</strong></>}
         {filtroColetas > 0 && <> · mín. <strong>{filtroColetas}</strong> coletas Parça</>}
         {transpSel.length > 0 && <> · atendidas por <strong>{transpSel.length === 1 ? transpSel[0] : `${transpSel.length} transportadoras`}</strong></>}
         {soSelecionadas && <> · <strong>somente as selecionadas</strong></>}
+        {incluirSemParca && <> · incluindo <strong>cidades sem Parça</strong></>}
+        {raioAtivo && centrosRaio.length > 0 && <> · dentro de <strong>{raioKm} km</strong> de {centrosRaio.length} cidade(s) selecionada(s)</>}
       </div>
 
       {/* ── Mapa Leaflet ── */}
@@ -580,6 +704,24 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
           {/* Zoom na cidade buscada */}
           {cidadeFoco && <FlyToCidade ponto={cidadeFoco} />}
+
+          {/* Círculos do raio a partir das cidades selecionadas */}
+          {raioAtivo && centrosRaio.map((c,i) => (
+            <Circle key={`raio-${c.uf}-${c.cidade}-${i}`}
+              center={[c.lat, c.lon]} radius={raioKm * 1000}
+              pathOptions={{ color: C.laranja, weight: 1.5, fillColor: C.laranja, fillOpacity: 0.06, dashArray: "4 6" }}
+              interactive={false} />
+          ))}
+
+          {/* Linha ligando duas cidades selecionadas, com a distância */}
+          {distancias.length === 1 && (
+            <Polyline positions={[[distancias[0].latA, distancias[0].lonA], [distancias[0].latB, distancias[0].lonB]]}
+              pathOptions={{ color: C.azul, weight: 2, dashArray: "6 6" }}>
+              <Tooltip permanent direction="center">
+                <strong>{distancias[0].km.toFixed(1)} km</strong>
+              </Tooltip>
+            </Polyline>
+          )}
 
           {/* Anel de destaque na cidade buscada */}
           {cidadeFoco && (
