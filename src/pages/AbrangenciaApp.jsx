@@ -2364,6 +2364,8 @@ export default function AbrangenciaApp() {
   const [erroEnvioAbrangencia, setErroEnvioAbrangencia] = useState("");
   const [historicoAbrangencia, setHistoricoAbrangencia] = useState([]);
   const [origemDados, setOrigemDados] = useState(""); // "servidor" | "local"
+  const [distNoServidor, setDistNoServidor] = useState(false);
+  const [enviandoDist, setEnviandoDist] = useState(false);
   const [avisoPersist, setAvisoPersist] = useState(false);
   const [avisoPersistDetalhe, setAvisoPersistDetalhe] = useState("");
 
@@ -2430,6 +2432,19 @@ export default function AbrangenciaApp() {
           csvRaw: data.anteriorCSV,
         });
       }
+      // Distribuição atual da simulação — mesma lógica: servidor é a fonte.
+      if (data && data.distCSV) {
+        const rowsDist = parseCSVDistribuicaoAtual(data.distCSV);
+        if (rowsDist.length) {
+          setDistribuicaoAtual({
+            rows: rowsDist,
+            nome: data.distNome || "distribuicao-atual.csv",
+            data: data.distData || null,
+            csvRaw: data.distCSV,
+          });
+          setDistNoServidor(true);
+        }
+      }
       setHistoricoAbrangencia(data?.historico || []);
       if (achou) setOrigemDados("servidor");
       return achou;
@@ -2450,9 +2465,10 @@ export default function AbrangenciaApp() {
         if (a) { setAtual(a); setOrigemDados("local"); }
         if (b) setAnterior(b);
       }
-      // A distribuição da simulação continua local (não existe endpoint pra ela).
+      // Distribuição da simulação: IndexedDB só como fallback (o servidor já
+      // devolveu a base dentro de recarregarAbrangenciaDoServidor, se existir).
       const d = await carregarChave("distribuicaoAtual");
-      if (d) setDistribuicaoAtual(d);
+      if (d) setDistribuicaoAtual(prev => prev || d);
     })();
   }, [recarregarAbrangenciaDoServidor]);
 
@@ -2485,9 +2501,31 @@ export default function AbrangenciaApp() {
         const texto = await lerArquivoComoTexto(file);
         const rows = parseCSVDistribuicaoAtual(texto);
         if (!rows.length) throw new Error("Arquivo sem linhas válidas — confira as colunas: Estado, Cidade, Transportadora, Parça (Sim/Não).");
-        const novo = { rows, nome: file.name, data: new Date().toISOString() };
-        await salvarChave("distribuicaoAtual", novo);
+        const novo = { rows, nome: file.name, data: new Date().toISOString(), csvRaw: texto };
         setDistribuicaoAtual(novo);
+
+        // Publica no servidor — é isso que faz a simulação valer para todos.
+        setEnviandoDist(true);
+        try {
+          const r = await fetch("/api/abrangencia", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ distribuicao: texto, nome: file.name }),
+          });
+          let data;
+          try { data = await r.json(); }
+          catch { throw new Error(`Resposta inesperada do servidor (status ${r.status}).`); }
+          if (!r.ok) throw new Error(data.detail ? `${data.error || "Erro"}: ${data.detail}` : (data.error || "Erro desconhecido"));
+          setDistNoServidor(true);
+        } catch (e) {
+          setErroDist(`Distribuição carregada só neste navegador — não consegui publicar no servidor: ${e?.message || e}`);
+          setDistNoServidor(false);
+        } finally {
+          setEnviandoDist(false);
+        }
+
+        // Cache local (fallback offline)
+        await salvarChave("distribuicaoAtual", novo);
       } catch (e) { setErroDist(e.message || String(e)); } finally { setLoadingDist(""); }
     })();
   }, []);
@@ -3376,9 +3414,17 @@ export default function AbrangenciaApp() {
               {loadingDist && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Processando {loadingDist}...</div>}
               {erroDist && <div style={{ padding:12, background:"#FEE2E2", border:"1px solid #DC2626", borderRadius:8, color:"#991B1B", fontSize:13, marginBottom:12 }}>⚠️ {erroDist}</div>}
 
+              {enviandoDist && <div style={{ fontSize:13, color:C.laranja, marginBottom:12 }}>⏳ Publicando a distribuição no servidor (vale para todos em ~1 minuto)...</div>}
+              {distribuicaoAtual && (
+                <div style={{ fontSize:12, color: distNoServidor ? C.cinzaTexto : C.amarelo, marginBottom:6, fontWeight: distNoServidor ? 400 : 600 }}>
+                  {distNoServidor
+                    ? "✓ Distribuição vinda do servidor — todos os colaboradores veem esta simulação."
+                    : "⚠️ Distribuição só neste navegador — reimporte o arquivo para publicar para os outros."}
+                </div>
+              )}
               {distribuicaoAtual && (
                 <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:16 }}>
-                  Distribuição atual: <strong>{distribuicaoAtual.nome}</strong> · importada em {new Date(distribuicaoAtual.data).toLocaleString("pt-BR")} · {distribuicaoAtual.rows.length} vínculo(s) cidade↔transportadora mapeado(s), sendo {distribuicaoAtual.rows.filter(r=>r.souParca).length} marcado(s) como Parça
+                  Distribuição atual: <strong>{distribuicaoAtual.nome}</strong>{distribuicaoAtual.data && <> · importada em {new Date(distribuicaoAtual.data).toLocaleString("pt-BR")}</>} · {distribuicaoAtual.rows.length} vínculo(s) cidade↔transportadora mapeado(s), sendo {distribuicaoAtual.rows.filter(r=>r.souParca).length} marcado(s) como Parça
                 </div>
               )}
 
