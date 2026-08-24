@@ -40,12 +40,33 @@ function ZoomRegion({ bounds }) {
   return null;
 }
 
+// Componente auxiliar para dar zoom numa cidade específica (buscador)
+function FlyToCidade({ ponto }) {
+  const map = useMap();
+  useEffect(() => {
+    if (ponto) map.flyTo([ponto.lat, ponto.lon], 10, { duration: 1.2 });
+  }, [ponto]);
+  return null;
+}
+
+// Normaliza texto para busca (sem acento, minúsculo)
+function normTxt(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
 export default function MapaAbrangencia({ rows, coordCidades }) {
   const [filtroVal,     setFiltroVal]     = useState("Todos");
   const [filtroRegiao,  setFiltroRegiao]  = useState("Todas");
   const [filtroColetas, setFiltroColetas] = useState(0);   // Mínimo de coletas Parça
   const [ufFoco,        setUfFoco]        = useState(null);
   const [resetKey,      setResetKey]      = useState(0);
+
+  // Filtro por parça / transportadora
+  const [filtroTransp,  setFiltroTransp]  = useState("Todos");
+
+  // Buscador de cidades
+  const [buscaCidade,   setBuscaCidade]   = useState("");
+  const [cidadeFoco,    setCidadeFoco]    = useState(null); // ponto focado pelo buscador
 
   // ── Lista de cidades selecionadas para exportação ─────────────────────────
   const [cidadesSelecionadas, setCidadesSelecionadas] = useState(new Map()); // key → {uf,cidade,coletasTotal,coletasParca}
@@ -84,10 +105,15 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       if (!mapa.has(key)) {
         mapa.set(key, { uf: r.estado, cidade: r.cidade, lat: coord[0], lon: coord[1],
           coletasTotal: 0, coletasParca: 0, temParca: false,
-          transpParca: new Set(), transpNaoParca: new Set() });
+          transpParca: new Set(), transpNaoParca: new Set(),
+          transpTodas: new Set(), volTransp: {} });
       }
       const p = mapa.get(key);
       p.coletasTotal += r.abrangencia;
+      if (r.transportadora) {
+        p.transpTodas.add(r.transportadora);
+        p.volTransp[r.transportadora] = (p.volTransp[r.transportadora] || 0) + r.abrangencia;
+      }
       if (r.validacao === "PARÇA") {
         p.coletasParca += r.abrangencia;
         p.temParca = true;
@@ -102,6 +128,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       raio: Math.min(22, Math.max(4, Math.sqrt(p.coletasTotal) * 0.6)),
       transpParca: [...p.transpParca].join(", "),
       transpNaoParca: [...p.transpNaoParca].join(", "),
+      transpTodas: p.transpTodas,
     }));
   }, [rows, coordCidades]);
 
@@ -118,9 +145,37 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
       if (filtroVal === "NÃO PARÇA" && p.temParca)            return false;
       if (ufsRegiao && !ufsRegiao.includes(p.uf))             return false;
       if (p.coletasParca < filtroColetas)                     return false;
+      if (filtroTransp !== "Todos" && !p.transpTodas.has(filtroTransp)) return false;
       return true;
     });
-  }, [pontos, filtroVal, filtroRegiao, filtroColetas]);
+  }, [pontos, filtroVal, filtroRegiao, filtroColetas, filtroTransp]);
+
+  // Cidades visíveis (para o datalist do buscador)
+  const opcoesBusca = useMemo(
+    () => [...pontosFiltrados]
+      .sort((a,b) => a.cidade.localeCompare(b.cidade))
+      .map(p => ({ label: `${p.cidade} - ${p.uf}`, ponto: p })),
+    [pontosFiltrados]
+  );
+
+  // Resolve o texto digitado em um ponto do mapa
+  const buscar = useCallback((texto) => {
+    const alvo = normTxt(texto);
+    if (!alvo) { setCidadeFoco(null); return; }
+    const exato = opcoesBusca.find(o => normTxt(o.label) === alvo)
+      || opcoesBusca.find(o => normTxt(o.ponto.cidade) === alvo)
+      || opcoesBusca.find(o => normTxt(o.label).startsWith(alvo))
+      || opcoesBusca.find(o => normTxt(o.label).includes(alvo));
+    setCidadeFoco(exato ? exato.ponto : null);
+  }, [opcoesBusca]);
+
+  // Bounds de todas as cidades atendidas pela transportadora filtrada
+  const boundsTransp = useMemo(() => {
+    if (filtroTransp === "Todos" || !pontosFiltrados.length) return null;
+    const lats = pontosFiltrados.map(p => p.lat);
+    const lons = pontosFiltrados.map(p => p.lon);
+    return [[Math.min(...lats)-1, Math.min(...lons)-1], [Math.max(...lats)+1, Math.max(...lons)+1]];
+  }, [filtroTransp, pontosFiltrados]);
 
   // Bounds da região selecionada para zoom automático
   const boundsRegiao = useMemo(() => {
@@ -133,6 +188,26 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
   }, [filtroRegiao, pontosFiltrados]);
 
   const ufsDisponiveis = useMemo(() => [...new Set(rows.map(r=>r.estado))].sort(), [rows]);
+
+  // Transportadoras disponíveis, separadas entre Parça e não Parça
+  const transportadoras = useMemo(() => {
+    const m = new Map(); // nome -> { nome, parca, cidades:Set, coletas }
+    rows.forEach(r => {
+      const t = r.transportadora;
+      if (!t) return;
+      if (!m.has(t)) m.set(t, { nome: t, parca: false, cidades: new Set(), coletas: 0 });
+      const x = m.get(t);
+      x.coletas += r.abrangencia;
+      x.cidades.add(`${r.estado}|${r.cidade}`);
+      if (r.validacao === "PARÇA") x.parca = true;
+    });
+    const lista = [...m.values()].map(x => ({ ...x, qtdCidades: x.cidades.size }));
+    return {
+      parca:    lista.filter(x =>  x.parca).sort((a,b)=>a.nome.localeCompare(b.nome)),
+      naoParca: lista.filter(x => !x.parca).sort((a,b)=>a.nome.localeCompare(b.nome)),
+      byName:   new Map(lista.map(x => [x.nome, x])),
+    };
+  }, [rows]);
 
   const maxColetas = useMemo(() => Math.max(...pontos.map(p=>p.coletasParca), 0), [pontos]);
 
@@ -182,11 +257,102 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
           ))}
         </div>
 
-        <button onClick={()=>{ setFiltroVal("Todos"); setFiltroRegiao("Todas"); setFiltroColetas(0); setResetKey(k=>k+1); }}
+        <button onClick={()=>{ setFiltroVal("Todos"); setFiltroRegiao("Todas"); setFiltroColetas(0); setFiltroTransp("Todos"); setBuscaCidade(""); setCidadeFoco(null); setResetKey(k=>k+1); }}
           style={{ marginLeft:"auto", padding:"5px 12px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
           Resetar
         </button>
       </div>
+
+      {/* Segunda linha: buscador de cidades + filtro de parça/transportadora */}
+      <div style={{ display:"flex", gap:10, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+
+        {/* Buscador de cidades */}
+        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+          <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>🔍 Buscar cidade:</span>
+          <input
+            type="text"
+            value={buscaCidade}
+            list="mapa-cidades-list"
+            placeholder="Ex.: Campinas"
+            onChange={e=>{ setBuscaCidade(e.target.value); buscar(e.target.value); }}
+            onKeyDown={e=>{ if (e.key === "Enter") buscar(buscaCidade); }}
+            style={{ padding:"6px 10px", borderRadius:6, width:220, fontSize:12, fontWeight:600,
+              border:`1.5px solid ${cidadeFoco ? C.laranja : C.cinzaBorda}`,
+              color: cidadeFoco ? C.laranja : C.texto }} />
+          <datalist id="mapa-cidades-list">
+            {opcoesBusca.slice(0, 1500).map(o => <option key={o.label} value={o.label} />)}
+          </datalist>
+          {buscaCidade && (
+            <button onClick={()=>{ setBuscaCidade(""); setCidadeFoco(null); setResetKey(k=>k+1); }}
+              style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+              Limpar busca
+            </button>
+          )}
+          {buscaCidade && !cidadeFoco && (
+            <span style={{ fontSize:11, color:C.vermelho, fontWeight:600 }}>Cidade não encontrada nos filtros atuais</span>
+          )}
+        </div>
+
+        <div style={{ width:1, height:24, background:C.cinzaBorda }} />
+
+        {/* Filtro de parça / transportadora */}
+        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+          <span style={{ fontSize:11, fontWeight:700, color:C.cinzaTexto }}>Parça / Transportadora:</span>
+          <select value={filtroTransp}
+            onChange={e=>{ setFiltroTransp(e.target.value); setCidadeFoco(null); setBuscaCidade(""); }}
+            style={{ padding:"6px 10px", borderRadius:6, fontSize:12, fontWeight:600, cursor:"pointer", maxWidth:320,
+              border:`1.5px solid ${filtroTransp!=="Todos" ? C.laranja : C.cinzaBorda}`,
+              color: filtroTransp!=="Todos" ? C.laranja : C.cinzaTexto }}>
+            <option value="Todos">Todas as transportadoras</option>
+            <optgroup label="Parça">
+              {transportadoras.parca.map(t => (
+                <option key={t.nome} value={t.nome}>{t.nome} ({t.qtdCidades} cidades)</option>
+              ))}
+            </optgroup>
+            <optgroup label="Não Parça">
+              {transportadoras.naoParca.map(t => (
+                <option key={t.nome} value={t.nome}>{t.nome} ({t.qtdCidades} cidades)</option>
+              ))}
+            </optgroup>
+          </select>
+          {filtroTransp !== "Todos" && (
+            <button onClick={()=>setFiltroTransp("Todos")}
+              style={{ padding:"5px 10px", borderRadius:6, border:`1px solid ${C.cinzaBorda}`, background:"transparent", fontSize:12, cursor:"pointer", color:C.cinzaTexto }}>
+              Limpar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Resumo da transportadora selecionada */}
+      {filtroTransp !== "Todos" && (() => {
+        const t = transportadoras.byName.get(filtroTransp);
+        const volNoFiltro = pontosFiltrados.reduce((s,p) => s + (p.volTransp?.[filtroTransp] || 0), 0);
+        return (
+          <div style={{ display:"flex", gap:12, marginBottom:12, flexWrap:"wrap" }}>
+            <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Transportadora</div>
+              <div style={{ fontWeight:700, fontSize:14 }}>{filtroTransp}
+                <span style={{ marginLeft:8, fontSize:11, fontWeight:700, color: t?.parca ? C.verde : C.vermelho }}>
+                  {t?.parca ? "PARÇA" : "NÃO PARÇA"}
+                </span>
+              </div>
+            </div>
+            <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Cidades atendidas (no filtro)</div>
+              <div style={{ fontWeight:700, fontSize:18, color:C.laranja }}>{pontosFiltrados.length.toLocaleString("pt-BR")}</div>
+            </div>
+            <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Coletas da transportadora</div>
+              <div style={{ fontWeight:700, fontSize:18 }}>{volNoFiltro.toLocaleString("pt-BR")}</div>
+            </div>
+            <div style={{ background:C.cinzaFundo, border:`1px solid ${C.cinzaBorda}`, borderRadius:8, padding:"8px 14px", fontSize:12 }}>
+              <div style={{ color:C.cinzaTexto, marginBottom:2 }}>Estados</div>
+              <div style={{ fontWeight:700, fontSize:18 }}>{[...new Set(pontosFiltrados.map(p=>p.uf))].length}</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Contagem de pontos visíveis */}
       <div style={{ fontSize:12, color:C.cinzaTexto, marginBottom:10 }}>
@@ -194,6 +360,7 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
         {filtroRegiao !== "Todas" && <> na região <strong>{filtroRegiao}</strong></>}
         {filtroVal !== "Todos" && <> · validação <strong>{filtroVal}</strong></>}
         {filtroColetas > 0 && <> · mín. <strong>{filtroColetas}</strong> coletas Parça</>}
+        {filtroTransp !== "Todos" && <> · atendidas por <strong>{filtroTransp}</strong></>}
       </div>
 
       {/* ── Mapa Leaflet ── */}
@@ -218,6 +385,23 @@ export default function MapaAbrangencia({ rows, coordCidades }) {
 
           {/* Zoom automático na região filtrada */}
           {boundsRegiao && <ZoomRegion bounds={boundsRegiao} />}
+
+          {/* Zoom automático nas cidades da transportadora filtrada */}
+          {!cidadeFoco && boundsTransp && <ZoomRegion bounds={boundsTransp} />}
+
+          {/* Zoom na cidade buscada */}
+          {cidadeFoco && <FlyToCidade ponto={cidadeFoco} />}
+
+          {/* Anel de destaque na cidade buscada */}
+          {cidadeFoco && (
+            <CircleMarker
+              key={`foco-${cidadeFoco.uf}-${cidadeFoco.cidade}`}
+              center={[cidadeFoco.lat, cidadeFoco.lon]}
+              radius={cidadeFoco.raio + 10}
+              pathOptions={{ color: C.laranja, weight: 3, fill: false, dashArray: "5 5" }}
+              interactive={false}
+            />
+          )}
 
           {/* Pontos das cidades — menores primeiro (debaixo) */}
           {[...pontosFiltrados]
