@@ -1131,28 +1131,102 @@ async function copiarLinkMascarado(url, label) {
   }
 }
 
+// ── Agregados derivados do CSV bruto (fonte única: data/slaBruto.csv) ───────
+// Antes esses números viviam em localStorage (slaParca_weekly / _pd / _monthly
+// / _pd_mensal) e só eram calculados na máquina de quem importava o CSV — quem
+// só abria o link compartilhado via apenas o que tivesse sobrado no próprio
+// navegador (era a causa de "a performance só vai até a semana 31"). Agora
+// tudo é recalculado no cliente a partir do CSV que vem do servidor, então
+// todo mundo vê exatamente o mesmo número sem importar nada.
+function calcularAgregados(rows, forcarUltimaSemana) {
+  const vazio = { weekly: [], monthly: [], pd: {}, pdMensal: {}, semanasProc: [], meses: [], parceiros: [] };
+  if (!rows || !rows.length) return vazio;
+
+  const coletado = rows.filter(r => r["Flag Situacao Coleta"] === "Coletado");
+  if (!coletado.length) return vazio;
+
+  const semanasRaw = [...new Set(coletado.map(r => parseInt(r["semana_Efetivada"])).filter(n => !isNaN(n) && n >= 1 && n <= 53))].sort((a,b)=>a-b);
+  // Mesma regra do import: por padrão a última semana do arquivo é tratada
+  // como "em aberto" (ainda recebendo coletas) e fica fora dos indicadores.
+  const semanasProc = forcarUltimaSemana ? semanasRaw : semanasRaw.slice(0, -1);
+  const meses = [...new Set(coletado.map(r => parseInt(r["Mês_Efetivada"])).filter(n => !isNaN(n) && n >= 1 && n <= 12))].sort((a,b)=>a-b);
+  const parceiros = [...new Set(coletado.map(r => r["Transportadora"]).filter(Boolean))].sort();
+
+  // Índices por semana / mês / parceiro (um passe só — evita filtrar o CSV
+  // inteiro dezenas de vezes, que com ~30 semanas × 11 parceiros travava a tela)
+  const porSemana = new Map(), porMes = new Map(), porPS = new Map(), porPM = new Map();
+  coletado.forEach(r => {
+    const sem = parseInt(r["semana_Efetivada"]);
+    const mes = parseInt(r["Mês_Efetivada"]);
+    const par = r["Transportadora"];
+    if (!isNaN(sem)) {
+      if (!porSemana.has(sem)) porSemana.set(sem, []);
+      porSemana.get(sem).push(r);
+      if (par) {
+        const k = `${par}|${sem}`;
+        if (!porPS.has(k)) porPS.set(k, []);
+        porPS.get(k).push(r);
+      }
+    }
+    if (!isNaN(mes)) {
+      if (!porMes.has(mes)) porMes.set(mes, []);
+      porMes.get(mes).push(r);
+      if (par) {
+        const k = `${par}|${mes}`;
+        if (!porPM.has(k)) porPM.set(k, []);
+        porPM.get(k).push(r);
+      }
+    }
+  });
+
+  const weekly = [];
+  semanasProc.forEach(sem => {
+    const d = calcSemana(porSemana.get(sem) || []);
+    if (d) weekly.push({ s: sem, ...d });
+  });
+
+  const monthly = [];
+  meses.forEach(mes => {
+    const d = calcSemana(porMes.get(mes) || []);
+    if (d) monthly.push({ m: mes, ...d });
+  });
+
+  const pd = {}, pdMensal = {};
+  parceiros.forEach(par => {
+    semanasProc.forEach(sem => {
+      const rowsPS = porPS.get(`${par}|${sem}`) || [];
+      if (rowsPS.length < 3) return;              // mesma regra mínima do import
+      const d = calcSemana(rowsPS);
+      if (!d) return;
+      if (!pd[par]) pd[par] = {};
+      pd[par][sem] = d;
+    });
+    meses.forEach(mes => {
+      const rowsPM = porPM.get(`${par}|${mes}`) || [];
+      if (rowsPM.length < 3) return;
+      const d = calcSemana(rowsPM);
+      if (!d) return;
+      if (!pdMensal[par]) pdMensal[par] = {};
+      pdMensal[par][mes] = d;
+    });
+  });
+
+  return { weekly, monthly, pd, pdMensal, semanasProc, meses, parceiros };
+}
+
 export default function SlaApp() {
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [rawRows,        setRawRows]        = useState([]);
-  const [weeklyExtra,    setWeeklyExtra]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_weekly");return s?JSON.parse(s):[];}catch{return [];} });
-  const [pdExtra,        setPdExtra]        = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd");    return s?JSON.parse(s):{};}catch{return {};} });
-  // Cache mensal (mesmo padrão da Semana) — calculado no momento da importação
-  // do CSV, guardado em localStorage. Alimenta as visões de Mês/Trimestre/Ano
-  // (KPIs, Painel por Parceiro, Evolução, Histórico, Aging Elevado) sem
-  // depender do CSV bruto no IndexedDB. As abas de detalhe por pedido
-  // (Cidades, Problemas, Atrasos, Relatórios, Coleta x Recebimento) continuam
-  // precisando do CSV bruto, porque mostram informação que não cabe num
-  // indicador agregado.
-  const [monthlyExtra,   setMonthlyExtra]   = useState(()=>{ try{const s=localStorage.getItem("slaParca_monthly"); return s?JSON.parse(s):[];}catch{return [];} });
-  const [pdMonthlyExtra, setPdMonthlyExtra] = useState(()=>{ try{const s=localStorage.getItem("slaParca_pd_mensal");return s?JSON.parse(s):{};}catch{return {};} });
+  // Os indicadores (semana, mês, por parceiro) NÃO vêm mais de localStorage:
+  // são derivados do CSV bruto que o backend devolve (ver `agregados` abaixo).
   const [copiedLink,     setCopiedLink]     = useState(false); // false | "loading" | "done" | "manual"
   const [linkGerado,     setLinkGerado]     = useState(null);
   const [linkAviso,      setLinkAviso]      = useState("");
   const [fromURL,        setFromURL]        = useState(false);
-  const [uploadHistory,  setUploadHistory]  = useState(()=>{ try{const s=localStorage.getItem("slaParca_hist"); return s?JSON.parse(s):[];}catch{return [];} });
+  const [uploadHistory,  setUploadHistory]  = useState([]); // log da sessão (o histórico oficial vem do servidor: historicoSla)
   const [mostrarUploadHistory, setMostrarUploadHistory] = useState(true);
-  const [variacaoVol,    setVariacaoVol]    = useState(()=>{ try{const s=localStorage.getItem("slaParca_var");  return s?JSON.parse(s):[];}catch{return [];} });
+  const [variacaoVol,    setVariacaoVol]    = useState([]); // variações detectadas no import feito nesta sessão
   const [enviandoSla,     setEnviandoSla]     = useState(false); // enviando o CSV bruto pro backend (api/sla.js, POST)
   const [erroEnvioSla,    setErroEnvioSla]    = useState("");
   const [historicoSla,    setHistoricoSla]    = useState([]); // histórico de importações do CSV bruto (vem do backend)
@@ -1161,6 +1235,16 @@ export default function SlaApp() {
   const [csvStatus,   setCsvStatus]   = useState("idle"); // idle | processando | ok | erro
   const [csvNome,     setCsvNome]     = useState("");
   const [forcarUltimaSemana, setForcarUltimaSemana] = useState(false); // processa mesmo a semana "em aberto" (mais recente do CSV)
+
+  // ── Indicadores derivados do CSV bruto do servidor (fonte única) ───────────
+  const agregados = useMemo(
+    () => calcularAgregados(rawRows, forcarUltimaSemana),
+    [rawRows, forcarUltimaSemana]
+  );
+  const weeklyExtra    = agregados.weekly;
+  const pdExtra        = agregados.pd;
+  const monthlyExtra   = agregados.monthly;
+  const pdMonthlyExtra = agregados.pdMensal;
 
   // Estado da aba "Comparar CSVs" — mantido aqui (no componente pai) para não se
   // perder quando a pessoa troca de aba e volta (a aba em si é desmontada e
@@ -1249,89 +1333,12 @@ export default function SlaApp() {
 
   useEffect(() => { recarregarColetaRecebimento(); }, [recarregarColetaRecebimento]);
 
-  // Carregar dados de um link compartilhado (?d=...) — mescla com o que já
-  // está salvo neste navegador, igual ao CSAT.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const d = params.get("d");
-    if (!d) return;
-    decodeDataSla(d).then(decoded => {
-      if (!decoded) return;
-      if (Array.isArray(decoded.weeklyExtra) && decoded.weeklyExtra.length) {
-        setWeeklyExtra(prev => {
-          const porSemana = new Map(prev.map(w => [w.s, w]));
-          decoded.weeklyExtra.forEach(w => porSemana.set(w.s, w));
-          const merged = [...porSemana.values()].sort((a,b)=>a.s-b.s);
-          try { localStorage.setItem("slaParca_weekly", JSON.stringify(merged)); } catch {}
-          return merged;
-        });
-      }
-      if (decoded.pdExtra && typeof decoded.pdExtra === "object") {
-        setPdExtra(prev => {
-          const merged = { ...prev, ...decoded.pdExtra };
-          try { localStorage.setItem("slaParca_pd", JSON.stringify(merged)); } catch {}
-          return merged;
-        });
-      }
-      setFromURL(true);
-    });
-  }, []);
+  // O carregamento por link "?d=..." foi removido: os indicadores agora vêm
+  // sempre do CSV no servidor (api/sla.js), igual para todos os colaboradores.
+  // Um link com dados embutidos só criaria divergência entre navegadores.
 
-  // Exportar link comprimido com as semanas já calculadas (não manda o CSV bruto)
-  const LINK_MAX_CHARS = 11999;
-
-  const exportLinkSla = useCallback(async () => {
-    if (!weeklyExtra.length) return;
-    setCopiedLink("loading");
-    setLinkAviso("");
-    let url = null;
-    try {
-      // Tenta com todas as semanas salvas; se passar do limite, vai tirando as
-      // mais antigas (mantendo as mais recentes) até caber.
-      let candidato = [...weeklyExtra].sort((a,b)=>b.s-a.s);
-      let testUrl = "";
-      while (candidato.length > 0) {
-        const encoded = await encodeDataSla({ weeklyExtra: candidato, pdExtra });
-        testUrl = `${window.location.origin}${window.location.pathname}?d=${encoded}`;
-        if (testUrl.length <= LINK_MAX_CHARS) break;
-        candidato = candidato.slice(0, -1);
-      }
-      if (candidato.length === 0 || testUrl.length > LINK_MAX_CHARS) {
-        setCopiedLink(false);
-        setLinkAviso(`Não foi possível gerar um link dentro do limite de ${LINK_MAX_CHARS.toLocaleString("pt-BR")} caracteres.`);
-        return;
-      }
-      if (candidato.length < weeklyExtra.length) {
-        setLinkAviso(`O link com todas as ${weeklyExtra.length} semanas salvas ficaria acima do limite de ${LINK_MAX_CHARS.toLocaleString("pt-BR")} caracteres — incluí só as ${candidato.length} mais recentes.`);
-      }
-      url = testUrl;
-      setLinkGerado(url);
-    } catch (e) {
-      console.error("Erro ao gerar link:", e);
-      setCopiedLink(false);
-      return;
-    }
-    let copiou = await copiarLinkMascarado(url, "Dashboard Gestão Parça — Performance Coleta");
-    if (!copiou) {
-      try {
-        const el = document.createElement("textarea");
-        el.value = url;
-        el.style.position = "fixed";
-        el.style.opacity = "0";
-        document.body.appendChild(el);
-        el.focus();
-        el.select();
-        copiou = document.execCommand("copy");
-        document.body.removeChild(el);
-      } catch { copiou = false; }
-    }
-    if (copiou) {
-      setCopiedLink("done");
-      setTimeout(() => setCopiedLink(false), 4000);
-    } else {
-      setCopiedLink("manual");
-    }
-  }, [weeklyExtra, pdExtra]);
+  // Botão "Compartilhar link" removido junto com o carregamento por ?d=:
+  // basta enviar a URL do dashboard, que os dados vêm do servidor.
   const [simAumentoVendas, setSimAumentoVendas] = useState(79);
   const [simSLAEsperado,   setSimSLAEsperado]   = useState(84);
 
@@ -1553,84 +1560,18 @@ export default function SlaApp() {
         // Parceiros do CSV (local, não do state)
         const parcsCSV=[...new Set(coletado.map(r=>r["Transportadora"]).filter(Boolean))].sort();
 
-        // Calcular todas as semanas
-        const novasW=[], retroativasW=[];
-        setWeeklyExtra(prev=>{
-          const newW=[], retW=[];
-          semanasProc.forEach(s=>{
-            const rowsS=coletado.filter(r=>parseInt(r["semana_Efetivada"])===s);
-            const d=calcSemana(rowsS); if(!d) return;
-            const obj={s,...d};
-            if(prev.some(w=>w.s===s)) retW.push(obj); else newW.push(obj);
-          });
-          novasW.push(...newW); retroativasW.push(...retW);
-          const calculadas=[...newW,...retW];
-          // Manter semanas que NÃO estão neste CSV (não sobrescrever)
-          const merged=[
-            ...prev.filter(w=>!calculadas.find(n=>n.s===w.s)), // semanas antigas não tocadas
-            ...calculadas                                         // semanas do CSV atualizadas
-          ].sort((a,b)=>a.s-b.s);
-          try{localStorage.setItem("slaParca_weekly",JSON.stringify(merged));}catch{}
-          return merged;
-        });
-
-        // Calcular todos os meses (mesmo padrão da semana acima) — é isto que
-        // faz Mês/Trimestre/Ano sobreviverem sem o CSV bruto depois.
-        setMonthlyExtra(prev=>{
-          const calculadasM=[];
-          mesesRaw.forEach(m=>{
-            const rowsM=coletado.filter(r=>parseInt(r["Mês_Efetivada"])===m);
-            const d=calcSemana(rowsM); if(!d) return;
-            calculadasM.push({m,...d});
-          });
-          const merged=[
-            ...prev.filter(x=>!calculadasM.find(n=>n.m===x.m)),
-            ...calculadasM
-          ].sort((a,b)=>a.m-b.m);
-          try{localStorage.setItem("slaParca_monthly",JSON.stringify(merged));}catch{}
-          return merged;
-        });
-
-        // Por parceiro — capturar snapshot anterior para calcular variações
-        let pdSnapshot = {};
-        setPdExtra(prev=>{
-          pdSnapshot = prev; // snapshot ANTES de atualizar
-          const merged={...prev};
-          parcsCSV.forEach(p=>{
-            const rowsP=coletado.filter(r=>r["Transportadora"]===p);
-            semanasProc.forEach(s=>{
-              const rowsPS=rowsP.filter(r=>parseInt(r["semana_Efetivada"])===s);
-              if(rowsPS.length<3) return;
-              const d=calcSemana(rowsPS); if(!d) return;
-              if(!merged[p]) merged[p]={};
-              merged[p][s]=d;
-            });
-          });
-          try{localStorage.setItem("slaParca_pd",JSON.stringify(merged));}catch{}
-          return merged;
-        });
-
-        // Por parceiro e mês (mesmo padrão acima, cache mensal por parceiro)
-        setPdMonthlyExtra(prev=>{
-          const merged={...prev};
-          parcsCSV.forEach(p=>{
-            const rowsP=coletado.filter(r=>r["Transportadora"]===p);
-            mesesRaw.forEach(m=>{
-              const rowsPM=rowsP.filter(r=>parseInt(r["Mês_Efetivada"])===m);
-              if(rowsPM.length<3) return;
-              const d=calcSemana(rowsPM); if(!d) return;
-              if(!merged[p]) merged[p]={};
-              merged[p][m]=d;
-            });
-          });
-          try{localStorage.setItem("slaParca_pd_mensal",JSON.stringify(merged));}catch{}
-          return merged;
-        });
+        // Recalcula os agregados do CSV recém-importado (nada é gravado em
+        // localStorage — o CSV vai pro servidor e todos derivam dele).
+        const novosAgregados = calcularAgregados(rows, forcar);
+        const semanasAntes = new Set(weeklyExtra.map(w=>w.s));
+        const novasW       = novosAgregados.weekly.filter(w=>!semanasAntes.has(w.s));
+        const retroativasW = novosAgregados.weekly.filter(w=> semanasAntes.has(w.s));
+        const pdSnapshot   = pdExtra;   // agregados de ANTES deste import
 
         // Calcular variações de volume nas semanas retroativas
         const variacoes = retroativasW.map(w=>{
-          // Total anterior (do weeklyExtra snapshot — capturado dentro do setWeeklyExtra)
-          const semAnt = weeklyExtra.find(e=>e.s===w.s);
+          // Total anterior: agregado derivado do CSV que estava no servidor
+          const semAnt = weeklyExtra.find(e=>e.s===w.s);   // valor derivado do CSV anterior
           const totalAnt = semAnt?.total ?? null;
           const totalNovo = w.total;
           if(totalAnt===null||totalAnt===totalNovo) return null;
@@ -1653,18 +1594,14 @@ export default function SlaApp() {
               arquivo:file.name,
               variacoes,
             };
-            const updated=[...prev,entry];
-            try{localStorage.setItem("slaParca_var",JSON.stringify(updated));}catch{}
-            return updated;
+            return [...prev,entry];
           });
         }
 
         // Upload history
         setUploadHistory(prev=>{
           const entry={nome:file.name,data:new Date().toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}),total:rows.length};
-          const updated=[...prev,entry];
-          try{localStorage.setItem("slaParca_hist",JSON.stringify(updated));}catch{}
-          return updated;
+          return [...prev,entry];
         });
 
         // Auto-selecionar última semana
@@ -1771,9 +1708,7 @@ export default function SlaApp() {
         <input type="file" accept=".csv" disabled={enviandoSla} style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCSV(e.target.files[0]);e.target.value="";}}/>
         {enviandoSla ? "⏳ Enviando..." : "📂 Carregar CSV"}
       </label>
-      {weeklyExtra.length>0 && <button onClick={exportLinkSla} disabled={copiedLink==="loading"} style={{...pill(copiedLink==="done"),cursor:copiedLink==="loading"?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5}}>
-        {copiedLink==="loading" ? "⏳ Gerando..." : copiedLink==="done" ? "✓ Link copiado!" : copiedLink==="manual" ? "📋 Copie o link abaixo" : "🔗 Compartilhar link"}
-      </button>}
+
       {(abaGlobal==="geral"||abaGlobal==="parceiros")&&<button onClick={exportarCSV} style={{...pill(false),display:"flex",alignItems:"center",gap:5,color:C.azul}}>📥 Exportar CSV</button>}
     </div>
 
@@ -2330,25 +2265,31 @@ export default function SlaApp() {
       {/* ══ CONFIGURAÇÕES ══ */}
       {abaGlobal==="config"&&<div style={{display:"flex",flexDirection:"column",gap:16}}>
 
-        {/* Cache de semanas */}
-        {weeklyExtra.length>0&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        {/* Origem dos indicadores — tudo derivado do CSV do servidor */}
+        <div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <div>
-            <div style={{fontWeight:700,fontSize:14}}>💾 Cache de Semanas</div>
-            <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Semanas salvas: <strong>S{weeklyExtra.map(w=>w.s).join(", S")}</strong></div>
+            <div style={{fontWeight:700,fontSize:14}}>🗄️ Indicadores derivados do servidor</div>
+            <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>
+              {weeklyExtra.length>0
+                ? <>Semanas: <strong>S{weeklyExtra.map(w=>w.s).join(", S")}</strong></>
+                : <>Nenhuma semana calculada — o CSV do servidor não chegou ou está vazio.</>}
+            </div>
+            <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>
+              {monthlyExtra.length>0
+                ? <>Meses: <strong>{monthlyExtra.map(m=>MESES_NOME[m.m]).join(", ")}</strong> — usados por Mês/Trimestre/Ano</>
+                : <>Nenhum mês calculado.</>}
+            </div>
+            <div style={{fontSize:11,color:C.cinzaTexto,marginTop:6,maxWidth:640,lineHeight:1.5}}>
+              Nada fica salvo neste navegador: os números são recalculados do CSV
+              em <strong>data/slaBruto.csv</strong> a cada abertura, então todos os
+              colaboradores veem o mesmo resultado sem precisar importar nada.
+            </div>
           </div>
-          <button onClick={()=>{if(!window.confirm("Limpar cache de semanas? Os dados serão recalculados no próximo upload.")) return;try{localStorage.removeItem("slaParca_weekly");localStorage.removeItem("slaParca_pd");}catch{}setWeeklyExtra([]);setPdExtra({});}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar cache</button>
-        </div>}
-
-        {/* Cache de meses — mesmo padrão do cache de semanas acima. Alimenta as
-            visões de Mês/Trimestre/Ano (KPIs, Painel, Evolução, Histórico,
-            Aging Elevado) sem depender do CSV bruto. */}
-        {monthlyExtra.length>0&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div>
-            <div style={{fontWeight:700,fontSize:14}}>💾 Cache de Meses</div>
-            <div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Meses salvos: <strong>{monthlyExtra.map(m=>MESES_NOME[m.m]).join(", ")}</strong> — usado pelas visões de Mês/Trimestre/Ano</div>
-          </div>
-          <button onClick={()=>{if(!window.confirm("Limpar cache de meses? Os indicadores de Mês/Trimestre/Ano ficam em branco até o próximo upload.")) return;try{localStorage.removeItem("slaParca_monthly");localStorage.removeItem("slaParca_pd_mensal");}catch{}setMonthlyExtra([]);setPdMonthlyExtra({});}} style={{fontSize:11,color:C.vermelho,background:C.vermelhoLight,border:`1px solid ${C.vermelho}`,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontWeight:600}}>🗑️ Limpar cache</button>
-        </div>}
+          <button onClick={recarregarSlaDoServidor}
+            style={{fontSize:12,color:C.laranja,background:"transparent",border:`1px solid ${C.laranja}`,borderRadius:6,padding:"6px 14px",cursor:"pointer",fontWeight:700}}>
+            🔄 Recarregar do servidor
+          </button>
+        </div>
 
         {/* CSV bruto atual — salvo no servidor (data/slaBruto.csv), usado pela
             Semana e pelas abas de detalhe por pedido (Cidades, Problemas,
@@ -2450,7 +2391,7 @@ export default function SlaApp() {
         {variacaoVol.length>0&&<div style={{background:C.cinzaCard,border:`1px solid ${C.cinzaBorda}`,borderRadius:12,overflow:"hidden"}}>
           <div style={{padding:"14px 20px",borderBottom:`1px solid ${C.cinzaBorda}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div><div style={{fontWeight:700,fontSize:14}}>📈 Variações de Volume entre Uploads</div><div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>Diferenças detectadas ao subir novos CSVs.</div></div>
-            <button onClick={()=>{if(!window.confirm("Limpar histórico de variações?")) return;try{localStorage.removeItem("slaParca_var");}catch{}setVariacaoVol([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>
+            <button onClick={()=>{if(!window.confirm("Limpar histórico de variações?")) return;setVariacaoVol([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>
           </div>
           <div style={{display:"flex",flexDirection:"column"}}>
             {[...variacaoVol].reverse().map((entry,ei)=>(
@@ -2505,7 +2446,7 @@ export default function SlaApp() {
               <span style={{fontSize:12,color:C.cinzaTexto}}>{mostrarUploadHistory?"▾":"▸"}</span>
               <div><div style={{fontWeight:700,fontSize:14}}>📂 Histórico de Uploads{!mostrarUploadHistory && uploadHistory.length>0 && <span style={{fontWeight:400,color:C.cinzaTexto}}> ({uploadHistory.length})</span>}</div><div style={{fontSize:12,color:C.cinzaTexto,marginTop:2}}>CSVs importados — salvo entre sessões.</div></div>
             </div>
-            {uploadHistory.length>0&&<button onClick={(e)=>{e.stopPropagation();if(!window.confirm("Limpar histórico?")) return;try{localStorage.removeItem("slaParca_hist");}catch{}setUploadHistory([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>}
+            {uploadHistory.length>0&&<button onClick={(e)=>{e.stopPropagation();if(!window.confirm("Limpar histórico?")) return;setUploadHistory([]);}} style={{fontSize:11,color:C.cinzaTexto,background:C.cinzaFundo,border:`1px solid ${C.cinzaBorda}`,borderRadius:6,padding:"4px 12px",cursor:"pointer"}}>🗑️ Limpar</button>}
           </div>
           {!mostrarUploadHistory ? null : uploadHistory.length===0
             ?<div style={{padding:20,color:C.cinzaTexto,fontSize:13,textAlign:"center"}}>Nenhum CSV importado ainda.</div>
