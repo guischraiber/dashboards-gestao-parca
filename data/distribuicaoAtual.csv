@@ -2995,7 +2995,7 @@ PR;Ivaté;E S L KOSLYK CO;Sim
 PR;Honório Serpa;MG - DOMINALOG;Não
 PR;Ibema;MG - DOMINALOG;Não
 PR;Primeiro de Maio;E S L KOSLYK CO;Sim
-PR;Ibiporã;ARAPON-BULKY;Não
+PR;Ibiporã;E S L KOSLYK CO;Sim
 PR;Icaraíma;E S L KOSLYK CO;Sim
 PR;Querência do Norte;MG - DOMINALOG;Não
 PR;Iguaraçu;E S L KOSLYK CO;Sim
@@ -3594,14 +3594,14 @@ PI;Pau D'Arco do Piauí;MG - DOMINALOG;Não
 PI;Aroeiras do Itaim;MG - DOMINALOG;Não
 PI;Nazária;MG - DOMINALOG;Não
 RJ;Rio das Flores;MOVEL SERVICE;Sim
-RJ;Angra dos Reis;RIO - BULKYLOG;Não
-RJ;Comendador Levy Gasparian;RIO - BULKYLOG;Não
+RJ;Angra dos Reis;MOVEL SERVICE;Sim
+RJ;Comendador Levy Gasparian;MOVEL SERVICE;Sim
 RJ;Vassouras;MOVEL SERVICE;Sim
 RJ;Vassouras;MOVEL SERVICE;Sim
 RJ;Sapucaia;CONECTA CARGO;Não
 RJ;Aperibé;CONECTA CARGO;Não
 RJ;Araruama;MOVEL SERVICE;Sim
-RJ;Areal;RIO - BULKYLOG;Não
+RJ;Areal;MOVEL SERVICE;Sim
 RJ;Armação dos Búzios;MOVEL SERVICE;Sim
 RJ;Arraial do Cabo;MOVEL SERVICE;Sim
 RJ;Piraí;MOVEL SERVICE;Sim
@@ -3616,8 +3616,7 @@ RJ;Barra do Piraí;MOVEL SERVICE;Sim
 RJ;Barra Mansa;MOVEL SERVICE;Sim
 RJ;São Francisco de Itabapoana;CONECTA CARGO;Não
 RJ;Belford Roxo;MOVEL SERVICE;Sim
-RJ;Três Rios;RIO - BULKYLOG;Não
-RJ;Três Rios;RIO - BULKYLOG;Não
+RJ;Três Rios;MOVEL SERVICE;Sim
 RJ;Rio Bonito;MOVEL SERVICE;Sim
 RJ;Cantagalo;CONECTA CARGO;Não
 RJ;Itaperuna;MOVEL SERVICE;Sim
@@ -3637,8 +3636,7 @@ RJ;Conceição de Macabu;CONECTA CARGO;Não
 RJ;Miguel Pereira;MOVEL SERVICE;Sim
 RJ;Cordeiro;MOVEL SERVICE;Sim
 RJ;Silva Jardim;MOVEL SERVICE;Sim
-RJ;Trajano de Moraes;CONECTA CARGO;Não
-RJ;Trajano de Moraes;RIO - BULKYLOG;Não
+RJ;Trajano de Moraes;MOVEL SERVICE;Sim
 RJ;Santa Maria Madalena;MOVEL SERVICE;Sim
 RJ;Duas Barras;MOVEL SERVICE;Sim
 RJ;Duque de Caxias;MOVEL SERVICE;Sim
@@ -3648,7 +3646,7 @@ RJ;Itaocara;CONECTA CARGO;Não
 RJ;Rio Claro;MOVEL SERVICE;Sim
 RJ;Guapimirim;MOVEL SERVICE;Sim
 RJ;Iguaba Grande;MOVEL SERVICE;Sim
-RJ;Paraíba do Sul;RIO - BULKYLOG;Não
+RJ;Paraíba do Sul;MOVEL SERVICE;Sim
 RJ;Itaboraí;MOVEL SERVICE;Sim
 RJ;Itaguaí;MOVEL SERVICE;Sim
 RJ;Italva;MOVEL SERVICE;Sim
@@ -3667,7 +3665,7 @@ RJ;Niterói;MOVEL SERVICE;Sim
 RJ;Nova Friburgo;MOVEL SERVICE;Sim
 RJ;Nova Iguaçu;MOVEL SERVICE;Sim
 RJ;Paracambi;MOVEL SERVICE;Sim
-RJ;Paraty;RIO - BULKYLOG;Não
+RJ;Paraty;MOVEL SERVICE;Sim
 RJ;Petrópolis;MOVEL SERVICE;Sim
 RJ;Pinheiral;MOVEL SERVICE;Sim
 RJ;Porciúncula;MOVEL SERVICE;Sim
@@ -3681,7 +3679,7 @@ RJ;São Gonçalo;MOVEL SERVICE;Sim
 RJ;São João de Meriti;MOVEL SERVICE;Sim
 RJ;São João de Meriti;MOVEL SERVICE;Sim
 RJ;São José de Ubá;CONECTA CARGO;Não
-RJ;São José do Vale do Rio Preto;RIO - BULKYLOG;Não
+RJ;São José do Vale do Rio Preto;MOVEL SERVICE;Sim
 RJ;São Pedro da Aldeia;MOVEL SERVICE;Sim
 RJ;São Sebastião do Alto;MOVEL SERVICE;Sim
 RJ;Saquarema;MOVEL SERVICE;Sim
