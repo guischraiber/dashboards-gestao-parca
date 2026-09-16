@@ -28,6 +28,31 @@ const TRANSP_MAP = {
 };
 const normTransp = (t) => TRANSP_MAP[t?.trim()] || t?.trim() || "Outros";
 
+// ── Classificação de criticidade ────────────────────────────────────────────
+// Além do corte simples por nota (nota <= 3 = crítica, usado em
+// comentariosNeg/Pos), sinalizamos como CRÍTICO os casos que indicam falha
+// grave de execução — nota 1 em agendamento ou cumprimento de data, ou
+// linguagem explícita de reclamação grave no comentário — para que esses
+// casos sejam encaminhados ao parceiro responsável, tenham ou não comentário.
+const FRASES_CRITICAS = [
+  "pior empresa", "nem retiraram", "não teve", "nao teve", "ainda está", "ainda esta",
+  "péssima experiência", "pessima experiencia", "não foi cumprido", "nao foi cumprido",
+  "sequer agendaram", "se quer agendaram", "demora para o agendamento",
+  "não retiraram", "nao retiraram", "a coleta nao foi realizada", "a coleta não foi realizada",
+];
+function classificarCriticidade(r) {
+  const ag = parseInt(r["agendamento_servico"]);
+  const cum = parseInt(r["cumprimento_data_agendamento"]);
+  const post = parseInt(r["postura_profissional"]);
+  const nota = parseInt(r["experiencia_geral"]);
+  const comentario = (r.comentario || r["comentario_aberto"] || "").toLowerCase();
+  const temFraseCritica = FRASES_CRITICAS.some(f => comentario.includes(f));
+  if (ag === 1 || cum === 1 || temFraseCritica) return "critico";
+  const scores = [nota, ag, cum, post].filter(n => !isNaN(n));
+  if (scores.length && Math.min(...scores) <= 3) return "negativo";
+  return "positivo";
+}
+
 function parseDate(str) {
   if (!str) return null;
   const parts = str.trim().split("/");
@@ -245,12 +270,25 @@ function calcAgregado(resp, disp, label, semana, mes) {
   const comentariosPos = resp.filter(r => r.nota >= 4 && r.comentario)
     .map(r => ({ nota: r.nota, transp: r.transp, comentario: r.comentario, semana: r.semana }));
 
+  // Casos críticos — falha grave de execução, com ou sem comentário
+  const casosCriticos = resp.filter(r => classificarCriticidade(r) === "critico")
+    .map(r => ({
+      pedido: r["pedido"] || "", transp: r.transp,
+      cidade: r["Cidade"] || "", estado: r["Estado"] || "",
+      dataResposta: r["data_resposta"] || "",
+      nota: r.nota,
+      agendamento: parseInt(r["agendamento_servico"]),
+      cumprimento: parseInt(r["cumprimento_data_agendamento"]),
+      postura: parseInt(r["postura_profissional"]),
+      comentario: r.comentario, semana: r.semana,
+    }));
+
   return {
     label, semana, mes,
     respostas: resp.length, disparos: disp.length,
     share, taxa, notas45,
     parceiros, motivos,
-    comentariosNeg, comentariosPos,
+    comentariosNeg, comentariosPos, casosCriticos,
     // Versão slim para compartilhamento (sem comentários)
     slim: { label, semana, mes, respostas: resp.length, disparos: disp.length, share, taxa, notas45, parceiros, motivos },
   };
@@ -520,12 +558,14 @@ export default function CsatApp() {
               ...p,
               comentariosNeg: [],
               comentariosPos: [],
+              casosCriticos: [],
               slim: p,
             })),
             porMes: (decoded.porMes || []).map(p => ({
               ...p,
               comentariosNeg: [],
               comentariosPos: [],
+              casosCriticos: [],
               slim: p,
             })),
             semanasTravadasCount: (decoded.porSemana || []).length,
@@ -766,12 +806,13 @@ export default function CsatApp() {
     // Comentários
     const comentariosNeg = lista.flatMap(p => p.comentariosNeg || []);
     const comentariosPos = lista.flatMap(p => p.comentariosPos || []);
+    const casosCriticos = lista.flatMap(p => p.casosCriticos || []);
 
     const labels = lista.map(p => p.label).join(", ");
     return {
       label: labels, semana: null, mes: null,
       respostas: totalResp, disparos: totalDisp, notas45: totalN45,
-      share, taxa, parceiros, motivos, comentariosNeg, comentariosPos,
+      share, taxa, parceiros, motivos, comentariosNeg, comentariosPos, casosCriticos,
       slim: { label: labels, semana: null, mes: null, respostas: totalResp, disparos: totalDisp, notas45: totalN45, share, taxa, parceiros, motivos },
     };
   }, []);
@@ -827,6 +868,7 @@ export default function CsatApp() {
       })(),
       comentariosNeg: periodoAtual.comentariosNeg.filter(c => c.transp === parceroFiltro),
       comentariosPos: periodoAtual.comentariosPos.filter(c => c.transp === parceroFiltro),
+      casosCriticos: (periodoAtual.casosCriticos || []).filter(c => c.transp === parceroFiltro),
     };
   }, [periodoAtual, parceroFiltro]);
 
@@ -1292,6 +1334,49 @@ export default function CsatApp() {
             {/* COMENTÁRIOS */}
             {tab === "comentarios" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+                {/* Casos Críticos — falha grave de execução, encaminhar ao parceiro */}
+                {periodoFiltrado.casosCriticos && periodoFiltrado.casosCriticos.length > 0 && (
+                  <Card style={{ border: `2px solid ${C.vermelho}`, background: C.vermelhoLight + "33" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <SecHead>🚨 Casos Críticos — {periodoFiltrado.label}{parceroFiltro !== "Todos" ? ` · ${parceroFiltro}` : ""}</SecHead>
+                      <span style={{ fontSize: 24, fontWeight: 700, color: C.vermelho }}>{periodoFiltrado.casosCriticos.length}</span>
+                    </div>
+                    <p style={{ fontSize: 12, color: C.cinzaTexto, marginBottom: 14 }}>
+                      Nota 1 em agendamento ou cumprimento de data, ou relato explícito de coleta não realizada / falha grave — encaminhar ao responsável do parceiro para retorno com causa raiz e ação corretiva.
+                    </p>
+                    {(() => {
+                      const porParceiro = {};
+                      periodoFiltrado.casosCriticos.forEach(c => {
+                        if (!porParceiro[c.transp]) porParceiro[c.transp] = [];
+                        porParceiro[c.transp].push(c);
+                      });
+                      const nomes = Object.keys(porParceiro).sort((a, b) => porParceiro[b].length - porParceiro[a].length);
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                          {nomes.map(nome => (
+                            <div key={nome}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                                <span style={{ fontSize: 13, fontWeight: 700 }}>{nome}</span>
+                                <span style={{ fontSize: 11, background: C.vermelho, color: "#fff", borderRadius: 20, padding: "1px 8px", fontWeight: 700 }}>{porParceiro[nome].length}</span>
+                              </div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {porParceiro[nome].map((c, i) => (
+                                  <div key={i} style={{ display: "flex", gap: 8, padding: "8px 10px", background: C.cinzaCard, borderRadius: 7, borderLeft: `3px solid ${C.vermelho}`, flexWrap: "wrap" }}>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: C.vermelho, flexShrink: 0, minWidth: 90 }}>{c.pedido || "—"}</span>
+                                    <span style={{ fontSize: 11, color: C.cinzaTexto, flexShrink: 0, minWidth: 110 }}>{c.cidade}{c.estado ? `/${c.estado}` : ""}</span>
+                                    <span style={{ fontSize: 11, color: C.cinzaTexto, flexShrink: 0, minWidth: 100 }}>Ag:{isNaN(c.agendamento) ? "—" : c.agendamento} Cu:{isNaN(c.cumprimento) ? "—" : c.cumprimento} Po:{isNaN(c.postura) ? "—" : c.postura}</span>
+                                    <span style={{ fontSize: 12, color: C.texto, lineHeight: 1.4, flex: 1, minWidth: 180 }}>{c.comentario || "(sem comentário)"}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </Card>
+                )}
 
                 {/* Resumo de críticas */}
                 {periodoFiltrado.comentariosNeg.length > 0 && (() => {
