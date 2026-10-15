@@ -1,4 +1,4 @@
-Estado;Cidade;Transportadora;(Sim/Não)
+Estado;Cidade;Transportadora;Parça (Sim/Não)
 AC;Acrelândia;FAVORITA;Não
 AC;Assis Brasil;FAVORITA;Não
 AC;Brasiléia;FAVORITA;Não
@@ -4848,7 +4848,7 @@ SP;Cachoeira Paulista;CONECTA CARGO;Não
 SP;Cafelândia;TRINDADE & CUBA;Sim
 SP;Caiabu;CONECTA CARGO;Não
 SP;Santos;SAFARI MONTAGEM;Sim
-SP;Caieiras;SAFARI MONTAGEM;Sim
+SP;Caieiras;TANIA AOKI OUTL;Sim
 SP;Caiuá;BULKY LOG - JUN;Não
 SP;Cajamar;SAFARI MONTAGEM;Sim
 SP;Cajati;CONECTA CARGO;Não
@@ -4923,8 +4923,8 @@ SP;Palestina;CONECTA CARGO;Não
 SP;Echaporã;CONECTA CARGO;Não
 SP;Elisiário;CONECTA CARGO;Não
 SP;Embaúba;CONECTA CARGO;Não
-SP;Embu das Artes;SAFARI MONTAGEM;Sim
-SP;Embu-Guaçu;CONECTA CARGO;Não
+SP;Embu das Artes;TANIA AOKI OUTL;Sim
+SP;Embu-Guaçu;TANIA AOKI OUTL;Sim
 SP;Emilianópolis;CONECTA CARGO;Não
 SP;Presidente Prudente;MEGA MULTI OUTL;Sim
 SP;Monte Aprazível;TRINDADE & CUBA;Sim
@@ -4948,8 +4948,8 @@ SP;Floreal;CONECTA CARGO;Não
 SP;Florínea;CONECTA CARGO;Não
 SP;Florínea;CONECTA CARGO;Não
 SP;Franca;TRINDADE & CUBA;Sim
-SP;Francisco Morato;SAFARI MONTAGEM;Sim
-SP;Franco da Rocha;SAFARI MONTAGEM;Sim
+SP;Francisco Morato;TANIA AOKI OUTL;Sim
+SP;Franco da Rocha;TANIA AOKI OUTL;Sim
 SP;Gabriel Monteiro;TRINDADE & CUBA;Sim
 SP;Gália;TRINDADE & CUBA;Sim
 SP;Garça;TRINDADE & CUBA;Sim
@@ -5020,7 +5020,7 @@ SP;Itaí;CONECTA CARGO;Não
 SP;Itaju;CONECTA CARGO;Não
 SP;Itanhaém;SAFARI MONTAGEM;Sim
 SP;Itaóca;CONECTA CARGO;Não
-SP;Itapecerica da Serra;SAFARI MONTAGEM;Sim
+SP;Itapecerica da Serra;TANIA AOKI OUTL;Sim
 SP;Itapevi;TANIA AOKI OUTL;Sim
 SP;Itapirapuã Paulista;CONECTA CARGO;Não
 SP;Itápolis;CONECTA CARGO;Não
