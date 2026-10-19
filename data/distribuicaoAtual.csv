@@ -4785,9 +4785,9 @@ SP;Aspásia;CONECTA CARGO;Não
 SP;Assis;MEGA MULTI OUTL;Sim
 SP;Atibaia;SALDAO CAMPINAS;Sim
 SP;Flórida Paulista;CONECTA CARGO;Não
-SP;Auriflama;CONECTA CARGO;Não
+SP;Auriflama;TRINDADE & CUBA;Sim
 SP;Avaí;CONECTA CARGO;Não
-SP;Avanhandava;CONECTA CARGO;Não
+SP;Avanhandava;TRINDADE & CUBA;Sim
 SP;Avaré;CONECTA CARGO;Não
 SP;Iperó;SALDAO CAMPINAS;Sim
 SP;Bady Bassitt;TRINDADE & CUBA;Sim
@@ -4796,10 +4796,10 @@ SP;Natividade da Serra;CONECTA CARGO;Não
 SP;Balbinos;CONECTA CARGO;Não
 SP;Bálsamo;TRINDADE & CUBA;Sim
 SP;Bananal;CONECTA CARGO;Não
-SP;Sud Mennucci;CONECTA CARGO;Não
+SP;Sud Mennucci;TRINDADE & CUBA;Sim
 SP;Itapira;MOVEIS CAMILO L;Sim
 SP;Barão de Antonina;CONECTA CARGO;Não
-SP;Barbosa;CONECTA CARGO;Não
+SP;Barbosa;TRINDADE & CUBA;Sim
 SP;Bariri;LOGME - TRANSPO;Sim
 SP;Barra Bonita;LOGME - TRANSPO;Sim
 SP;Barra do Chapéu;CONECTA CARGO;Não
@@ -4908,7 +4908,7 @@ SP;Cristais Paulista;TRINDADE & CUBA;Sim
 SP;Cruzália;MEGA MULTI OUTL;Sim
 SP;Cruzeiro;CONECTA CARGO;Não
 SP;Cubatão;CONECTA CARGO;Não
-SP;Palmeira D'Oeste;CONECTA CARGO;Não
+SP;Palmeira D'Oeste;TRINDADE & CUBA;Sim
 SP;Descalvado;CONECTA CARGO;Não
 SP;Diadema;SAFARI MONTAGEM;Sim
 SP;Dirce Reis;CONECTA CARGO;Não
@@ -4979,7 +4979,7 @@ SP;Itapeva;CONECTA CARGO;Não
 SP;Guarujá;SAFARI MONTAGEM;Sim
 SP;Guarulhos;SAFARI MONTAGEM;Sim
 SP;Guatapará;CONECTA CARGO;Não
-SP;Guzolândia;CONECTA CARGO;Não
+SP;Guzolândia;TRINDADE & CUBA;Sim
 SP;Herculândia;TRINDADE & CUBA;Sim
 SP;Holambra;SALDAO CAMPINAS;Sim
 SP;Hortolândia;SALDAO CAMPINAS;Sim
@@ -5007,7 +5007,7 @@ SP;Indaiatuba;SALDAO CAMPINAS;Sim
 SP;Indiana;CONECTA CARGO;Não
 SP;Indiaporã;CONECTA CARGO;Não
 SP;Nova Granada;CONECTA CARGO;Não
-SP;Inúbia Paulista;CONECTA CARGO;Não
+SP;Inúbia Paulista;TRINDADE & CUBA;Sim
 SP;Ipaussu;CONECTA CARGO;Não
 SP;Ipeúna;SALDAO CAMPINAS;Sim
 SP;Ipiguá;CONECTA CARGO;Não
@@ -5018,7 +5018,7 @@ SP;Irapuã;CONECTA CARGO;Não
 SP;Irapuru;CONECTA CARGO;Não
 SP;Itaí;CONECTA CARGO;Não
 SP;Itaju;CONECTA CARGO;Não
-SP;Itanhaém;SAFARI MONTAGEM;Sim
+SP;Itanhaém;TA NOVINHO;Sim
 SP;Itaóca;CONECTA CARGO;Não
 SP;Itapecerica da Serra;TANIA AOKI OUTL;Sim
 SP;Itapevi;TANIA AOKI OUTL;Sim
@@ -5073,7 +5073,7 @@ SP;Lins;TRINDADE & CUBA;Sim
 SP;Lorena;CONECTA CARGO;Não
 SP;Lourdes;CONECTA CARGO;Não
 SP;Louveira;SALDAO CAMPINAS;Sim
-SP;Lucélia;CONECTA CARGO;Não
+SP;Lucélia;TRINDADE & CUBA;Sim
 SP;Lucianópolis;TRINDADE & CUBA;Sim
 SP;Luís Antônio;CONECTA CARGO;Não
 SP;Luiziânia;TRINDADE & CUBA;Sim
@@ -5109,7 +5109,7 @@ SP;Mogi Guaçu;MOVEIS CAMILO L;Sim
 SP;Mogi Mirim;MOVEIS CAMILO L;Sim
 SP;Mombuca;BULKY LOG - JUN;Não
 SP;Monções;CONECTA CARGO;Não
-SP;Mongaguá;SAFARI MONTAGEM;Sim
+SP;Mongaguá;TA NOVINHO;Sim
 SP;Monte Alegre do Sul;BULKY LOG - JUN;Não
 SP;Monte Castelo;CONECTA CARGO;Não
 SP;Monte Mor;SALDAO CAMPINAS;Sim
@@ -5171,9 +5171,9 @@ SP;Pedreira;SALDAO CAMPINAS;Sim
 SP;Pedrinhas Paulista;CONECTA CARGO;Não
 SP;Pedro de Toledo;CONECTA CARGO;Não
 SP;Penápolis;TRINDADE & CUBA;Sim
-SP;Pereira Barreto;CONECTA CARGO;Não
+SP;Pereira Barreto;TRINDADE & CUBA;Sim
 SP;Pereiras;CONECTA CARGO;Não
-SP;Peruíbe;SAFARI MONTAGEM;Sim
+SP;Peruíbe;TA NOVINHO;Sim
 SP;Piacatu;TRINDADE & CUBA;Sim
 SP;Piedade;SALDAO CAMPINAS;Sim
 SP;Pilar do Sul;CONECTA CARGO;Não
@@ -5192,7 +5192,7 @@ SP;Planalto;TRINDADE & CUBA;Sim
 SP;Teodoro Sampaio;E S L KOSLYK CO;Sim
 SP;Platina;CONECTA CARGO;Não
 SP;Poá;SAFARI MONTAGEM;Sim
-SP;Poloni;CONECTA CARGO;Não
+SP;Poloni;TRINDADE & CUBA;Sim
 SP;Pompéia;MEGA MULTI OUTL;Sim
 SP;Pongaí;CONECTA CARGO;Não
 SP;Pontalinda;CONECTA CARGO;Não
@@ -5205,7 +5205,7 @@ SP;Potim;CONECTA CARGO;Não
 SP;Potirendaba;CONECTA CARGO;Não
 SP;Pracinha;CONECTA CARGO;Não
 SP;Pradópolis;CONECTA CARGO;Não
-SP;Praia Grande;SAFARI MONTAGEM;Sim
+SP;Praia Grande;TA NOVINHO;Sim
 SP;Pratânia;LOGME - TRANSPO;Sim
 SP;Presidente Alves;CONECTA CARGO;Não
 SP;Presidente Venceslau;MEGA MULTI OUTL;Sim
@@ -5239,8 +5239,8 @@ SP;Riolândia;CONECTA CARGO;Não
 SP;Riversul;CONECTA CARGO;Não
 SP;Roseira;CONECTA CARGO;Não
 SP;Rubiácea;TRINDADE & CUBA;Sim
-SP;Sabino;CONECTA CARGO;Não
-SP;Sagres;BULKY LOG - JUN;Não
+SP;Sabino;TRINDADE & CUBA;Sim
+SP;Sagres;TRINDADE & CUBA;Sim
 SP;Sales;CONECTA CARGO;Não
 SP;Sales Oliveira;CONECTA CARGO;Não
 SP;Salmourão;TRINDADE & CUBA;Sim
@@ -5288,8 +5288,7 @@ SP;São José dos Campos;SAFARI MONTAGEM;Sim
 SP;São João da Boa Vista;MOVEIS CAMILO L;Sim
 SP;São João das Duas Pontes;CONECTA CARGO;Não
 SP;São João das Duas Pontes;CONECTA CARGO;Não
-SP;São João de Iracema;CONECTA CARGO;Não
-SP;São João de Iracema;CONECTA CARGO;Não
+SP;São João de Iracema;TRINDADE & CUBA;Sim
 SP;São João do Pau D'Alho;CONECTA CARGO;Não
 SP;São Joaquim da Barra;CONECTA CARGO;Não
 SP;São José da Bela Vista;CONECTA CARGO;Não
@@ -5361,7 +5360,7 @@ SP;Ubarana;CONECTA CARGO;Não
 SP;Ubatuba;CONECTA CARGO;Não
 SP;Ubirajara;LOGME - TRANSPO;Sim
 SP;Uchoa;TRINDADE & CUBA;Sim
-SP;União Paulista;CONECTA CARGO;Não
+SP;União Paulista;TRINDADE & CUBA;Sim
 SP;Urânia;CONECTA CARGO;Não
 SP;Uru;CONECTA CARGO;Não
 SP;Urupês;CONECTA CARGO;Não
