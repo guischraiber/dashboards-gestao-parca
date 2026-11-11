@@ -1586,7 +1586,7 @@ MG;Águas Vermelhas;CONECTA CARGO;Não
 MG;Aimorés;CONECTA CARGO;Não
 MG;Aiuruoca;CONECTA CARGO;Não
 MG;Alagoa;CONECTA CARGO;Não
-MG;Albertina;CONECTA CARGO;Não
+MG;Albertina;MOVEIS CAMILO L;Sim
 MG;Martinho Campos;CONECTA CARGO;Não
 MG;Formiga;CONECTA CARGO;Não
 MG;Conselheiro Pena;CONECTA CARGO;Não
@@ -1600,7 +1600,7 @@ MG;Jaboticatubas;CONECTA CARGO;Não
 MG;Almenara;CONECTA CARGO;Não
 MG;Alpercata;CONECTA CARGO;Não
 MG;Alpinópolis;CONECTA CARGO;Não
-MG;Alterosa;CONECTA CARGO;Não
+MG;Alterosa;MOVEIS CAMILO L;Sim
 MG;Alto Caparaó;CONECTA CARGO;Não
 MG;Governador Valadares;CONECTA CARGO;Não
 MG;Alto Jequitibá;CONECTA CARGO;Não
@@ -1643,7 +1643,7 @@ MG;Araxá;AGMX OPORTUNIDA;Sim
 MG;São João Del Rei;CONECTA CARGO;Não
 MG;Arceburgo;CONECTA CARGO;Não
 MG;Arcos;CONECTA CARGO;Não
-MG;Areado;CONECTA CARGO;Não
+MG;Areado;MOVEIS CAMILO L;Sim
 MG;Ibiá;AGMX OPORTUNIDA;Sim
 MG;Argirita;CONECTA CARGO;Não
 MG;Aricanduva;CONECTA CARGO;Não
@@ -1705,7 +1705,7 @@ MG;Divino;CONECTA CARGO;Não
 MG;Bom Jesus do Galho;CONECTA CARGO;Não
 MG;Fervedouro;CONECTA CARGO;Não
 MG;Resplendor;CONECTA CARGO;Não
-MG;Bom Repouso;CONECTA CARGO;Não
+MG;Bom Repouso;MOVEIS CAMILO L;Sim
 MG;Santa Bárbara do Tugúrio;CONECTA CARGO;Não
 MG;Bom Sucesso;CONECTA CARGO;Não
 MG;Patos de Minas;AGMX OPORTUNIDA;Sim
@@ -1714,7 +1714,7 @@ MG;Bonfim;CONECTA CARGO;Não
 MG;Bonfinópolis de Minas;CONECTA CARGO;Não
 MG;Bonito de Minas;CONECTA CARGO;Não
 MG;Ferros;CONECTA CARGO;Não
-MG;Borda da Mata;CONECTA CARGO;Não
+MG;Borda da Mata;MOVEIS CAMILO L;Sim
 MG;Botelhos;MOVEIS CAMILO L;Sim
 MG;Brás Pires;CONECTA CARGO;Não
 MG;Brasilândia de Minas;CONECTA CARGO;Não
@@ -1725,7 +1725,7 @@ MG;Cruzeiro da Fortaleza;CONECTA CARGO;Não
 MG;Januária;CONECTA CARGO;Não
 MG;Brumadinho;CONECTA CARGO;Não
 MG;Conselheiro Lafaiete;CONECTA CARGO;Não
-MG;Bueno Brandão;CONECTA CARGO;Não
+MG;Bueno Brandão;MOVEIS CAMILO L;Sim
 MG;Buenópolis;CONECTA CARGO;Não
 MG;Bugre;CONECTA CARGO;Não
 MG;Buritis;CONECTA CARGO;Não
@@ -1736,7 +1736,7 @@ MG;Cabo Verde;MOVEIS CAMILO L;Sim
 MG;Turmalina;CONECTA CARGO;Não
 MG;Capitão Enéas;CONECTA CARGO;Não
 MG;Cachoeira da Prata;CONECTA CARGO;Não
-MG;Cachoeira de Minas;CONECTA CARGO;Não
+MG;Cachoeira de Minas;MOVEIS CAMILO L;Sim
 MG;Cachoeira de Pajeú;CONECTA CARGO;Não
 MG;Viçosa;CONECTA CARGO;Não
 MG;Rio Manso;CONECTA CARGO;Não
@@ -1747,10 +1747,10 @@ MG;Juiz de Fora;CONECTA CARGO;Não
 MG;Caiana;CONECTA CARGO;Não
 MG;Pirapetinga;CONECTA CARGO;Não
 MG;Cajuri;CONECTA CARGO;Não
-MG;Caldas;CONECTA CARGO;Não
+MG;Caldas;MOVEIS CAMILO L;Sim
 MG;Camacho;CONECTA CARGO;Não
 MG;Camanducaia;CONECTA CARGO;Não
-MG;Cambuí;CONECTA CARGO;Não
+MG;Cambuí;MOVEIS CAMILO L;Sim
 MG;Cambuquira;CONECTA CARGO;Não
 MG;Campanário;CONECTA CARGO;Não
 MG;Campanha;CONECTA CARGO;Não
@@ -1800,7 +1800,7 @@ MG;Carmo do Rio Claro;CONECTA CARGO;Não
 MG;Carmópolis de Minas;CONECTA CARGO;Não
 MG;Carneirinho;CONECTA CARGO;Não
 MG;Carrancas;CONECTA CARGO;Não
-MG;Carvalhópolis;CONECTA CARGO;Não
+MG;Carvalhópolis;MOVEIS CAMILO L;Sim
 MG;Carvalhos;CONECTA CARGO;Não
 MG;Casa Grande;CONECTA CARGO;Não
 MG;Cascalho Rico;CONECTA CARGO;Não
@@ -1846,7 +1846,7 @@ MG;Rio Piracicaba;CONECTA CARGO;Não
 MG;Coroaci;CONECTA CARGO;Não
 MG;Santos Dumont;CONECTA CARGO;Não
 MG;Conceição do Pará;CONECTA CARGO;Não
-MG;Conceição dos Ouros;CONECTA CARGO;Não
+MG;Conceição dos Ouros;MOVEIS CAMILO L;Sim
 MG;Ladainha;CONECTA CARGO;Não
 MG;São João da Ponte;CONECTA CARGO;Não
 MG;São Domingos do Prata;CONECTA CARGO;Não
@@ -1862,7 +1862,7 @@ MG;Itamarandiba;CONECTA CARGO;Não
 MG;Corinto;CONECTA CARGO;Não
 MG;Coqueiral;CONECTA CARGO;Não
 MG;Cordisburgo;CONECTA CARGO;Não
-MG;Cordislândia;CONECTA CARGO;Não
+MG;Cordislândia;MOVEIS CAMILO L;Sim
 MG;Coronel Fabriciano;CONECTA CARGO;Não
 MG;Coronel Murta;CONECTA CARGO;Não
 MG;Coronel Pacheco;CONECTA CARGO;Não
@@ -1871,9 +1871,9 @@ MG;Córrego do Bom Jesus;CONECTA CARGO;Não
 MG;Córrego Fundo;CONECTA CARGO;Não
 MG;Córrego Novo;CONECTA CARGO;Não
 MG;Guanhães;CONECTA CARGO;Não
-MG;Paraisópolis;CONECTA CARGO;Não
+MG;Paraisópolis;MOVEIS CAMILO L;Sim
 MG;Couto de Magalhães de Minas;CONECTA CARGO;Não
-MG;Ouro Fino;CONECTA CARGO;Não
+MG;Ouro Fino;MOVEIS CAMILO L;Sim
 MG;Crisólita;CONECTA CARGO;Não
 MG;Cristais;CONECTA CARGO;Não
 MG;Cristália;CONECTA CARGO;Não
@@ -1899,7 +1899,7 @@ MG;Virgolândia;CONECTA CARGO;Não
 MG;Divinolândia de Minas;CONECTA CARGO;Não
 MG;Divinópolis;CONECTA CARGO;Não
 MG;Divisa Alegre;CONECTA CARGO;Não
-MG;Divisa Nova;CONECTA CARGO;Não
+MG;Divisa Nova;MOVEIS CAMILO L;Sim
 MG;Divisópolis;CONECTA CARGO;Não
 MG;Palmópolis;CONECTA CARGO;Não
 MG;Dom Bosco;CONECTA CARGO;Não
@@ -1932,7 +1932,7 @@ MG;Espera Feliz;CONECTA CARGO;Não
 MG;Espinosa;CONECTA CARGO;Não
 MG;Espírito Santo do Dourado;CONECTA CARGO;Não
 MG;Luz;CONECTA CARGO;Não
-MG;Estiva;CONECTA CARGO;Não
+MG;Estiva;MOVEIS CAMILO L;Sim
 MG;Jordânia;CONECTA CARGO;Não
 MG;Eugenópolis;CONECTA CARGO;Não
 MG;Sabinópolis;CONECTA CARGO;Não
@@ -1981,12 +1981,12 @@ MG;Várzea da Palma;CONECTA CARGO;Não
 MG;Paraguaçu;MOVEIS CAMILO L;Sim
 MG;Guaraciaba;CONECTA CARGO;Não
 MG;Guaraciama;CONECTA CARGO;Não
-MG;Guaranésia;CONECTA CARGO;Não
+MG;Guaranésia;MOVEIS CAMILO L;Sim
 MG;Guarani;CONECTA CARGO;Não
 MG;Jequitinhonha;CONECTA CARGO;Não
 MG;Guarará;CONECTA CARGO;Não
 MG;Guarda-Mor;CONECTA CARGO;Não
-MG;Guaxupé;CONECTA CARGO;Não
+MG;Guaxupé;MOVEIS CAMILO L;Sim
 MG;Guidoval;CONECTA CARGO;Não
 MG;Guimarânia;CONECTA CARGO;Não
 MG;Guiricema;CONECTA CARGO;Não
@@ -2004,7 +2004,7 @@ MG;Iguatama;CONECTA CARGO;Não
 MG;Ijaci;CONECTA CARGO;Não
 MG;Ilicínea;CONECTA CARGO;Não
 MG;Imbé de Minas;CONECTA CARGO;Não
-MG;Inconfidentes;CONECTA CARGO;Não
+MG;Inconfidentes;MOVEIS CAMILO L;Sim
 MG;Indaiabira;CONECTA CARGO;Não
 MG;Indianópolis;CONECTA CARGO;Não
 MG;Ingaí;CONECTA CARGO;Não
@@ -2067,8 +2067,8 @@ MG;Santana dos Montes;CONECTA CARGO;Não
 MG;Josenópolis;CONECTA CARGO;Não
 MG;Juatuba;OUTELETRO BH;Sim
 MG;Juramento;CONECTA CARGO;Não
-MG;Monte Belo;CONECTA CARGO;Não
-MG;Juruaia;CONECTA CARGO;Não
+MG;Monte Belo;MOVEIS CAMILO L;Sim
+MG;Juruaia;MOVEIS CAMILO L;Sim
 MG;Rio Casca;CONECTA CARGO;Não
 MG;Juvenília;CONECTA CARGO;Não
 MG;Lagamar;CONECTA CARGO;Não
@@ -2139,13 +2139,13 @@ MG;Monte Azul;CONECTA CARGO;Não
 MG;Monte Carmelo;AGMX OPORTUNIDA;Sim
 MG;São Geraldo;CONECTA CARGO;Não
 MG;Monte Formoso;CONECTA CARGO;Não
-MG;Monte Sião;CONECTA CARGO;Não
+MG;Monte Sião;MOVEIS CAMILO L;Sim
 MG;Montezuma;CONECTA CARGO;Não
 MG;São Francisco;CONECTA CARGO;Não
 MG;Morro da Garça;CONECTA CARGO;Não
 MG;Oliveira;CONECTA CARGO;Não
 MG;Morro do Pilar;CONECTA CARGO;Não
-MG;Munhoz;CONECTA CARGO;Não
+MG;Munhoz;MOVEIS CAMILO L;Sim
 MG;Muzambinho;MOVEIS CAMILO L;Sim
 MG;Nacip Raydan;CONECTA CARGO;Não
 MG;Nanuque;CONECTA CARGO;Não
@@ -2162,7 +2162,7 @@ MG;Nova Lima;OUTELETRO BH;Sim
 MG;Nova Módica;CONECTA CARGO;Não
 MG;Nova Ponte;AGMX OPORTUNIDA;Sim
 MG;Nova Porteirinha;CONECTA CARGO;Não
-MG;Nova Resende;CONECTA CARGO;Não
+MG;Nova Resende;MOVEIS CAMILO L;Sim
 MG;Nova União;CONECTA CARGO;Não
 MG;Novo Oriente de Minas;CONECTA CARGO;Não
 MG;Novorizonte;CONECTA CARGO;Não
@@ -2296,7 +2296,7 @@ MG;Santa Luzia;OUTELETRO BH;Sim
 MG;Santa Maria do Salto;CONECTA CARGO;Não
 MG;Santa Rita de Minas;CONECTA CARGO;Não
 MG;Santa Rita do Itueto;CONECTA CARGO;Não
-MG;Santa Rita do Sapucaí;CONECTA CARGO;Não
+MG;Santa Rita do Sapucaí;MOVEIS CAMILO L;Sim
 MG;Santa Rosa da Serra;CONECTA CARGO;Não
 MG;Santana da Vargem;CONECTA CARGO;Não
 MG;Santana de Cataguases;CONECTA CARGO;Não
@@ -2328,7 +2328,7 @@ MG;São Gonçalo do Rio Abaixo;CONECTA CARGO;Não
 MG;São Gonçalo do Rio Preto;CONECTA CARGO;Não
 MG;São João Batista do Glória;CONECTA CARGO;Não
 MG;São João da Lagoa;CONECTA CARGO;Não
-MG;São João da Mata;CONECTA CARGO;Não
+MG;São João da Mata;MOVEIS CAMILO L;Sim
 MG;São João das Missões;CONECTA CARGO;Não
 MG;São João do Manhuaçu;CONECTA CARGO;Não
 MG;São João do Manteninha;CONECTA CARGO;Não
@@ -2351,11 +2351,11 @@ MG;São Miguel do Anta;CONECTA CARGO;Não
 MG;São Pedro da União;CONECTA CARGO;Não
 MG;São Pedro do Suaçuí;CONECTA CARGO;Não
 MG;São Romão;CONECTA CARGO;Não
-MG;São Sebastião da Bela Vista;CONECTA CARGO;Não
+MG;São Sebastião da Bela Vista;MOVEIS CAMILO L;Sim
 MG;São Sebastião da Vargem Alegre;CONECTA CARGO;Não
 MG;São Sebastião do Anta;CONECTA CARGO;Não
 MG;São Sebastião do Oeste;CONECTA CARGO;Não
-MG;São Sebastião do Paraíso;CONECTA CARGO;Não
+MG;São Sebastião do Paraíso;MOVEIS CAMILO L;Sim
 MG;São Sebastião do Rio Preto;CONECTA CARGO;Não
 MG;São Sebastião do Rio Verde;CONECTA CARGO;Não
 MG;São Tomás de Aquino;CONECTA CARGO;Não
@@ -2368,7 +2368,7 @@ MG;Sarzedo;OUTELETRO BH;Sim
 MG;Sem-Peixe;CONECTA CARGO;Não
 MG;Senador Cortes;CONECTA CARGO;Não
 MG;Senador Firmino;CONECTA CARGO;Não
-MG;Senador José Bento;CONECTA CARGO;Não
+MG;Senador José Bento;MOVEIS CAMILO L;Sim
 MG;Senador Modestino Gonçalves;CONECTA CARGO;Não
 MG;Senhora de Oliveira;CONECTA CARGO;Não
 MG;Senhora do Porto;CONECTA CARGO;Não
@@ -2377,13 +2377,13 @@ MG;Seritinga;CONECTA CARGO;Não
 MG;Serra Azul de Minas;CONECTA CARGO;Não
 MG;Serra da Saudade;CONECTA CARGO;Não
 MG;Serra dos Aimorés;CONECTA CARGO;Não
-MG;Serrania;CONECTA CARGO;Não
+MG;Serrania;MOVEIS CAMILO L;Sim
 MG;Serranópolis de Minas;CONECTA CARGO;Não
 MG;Serranos;CONECTA CARGO;Não
 MG;Sete Lagoas;OUTELETRO BH;Sim
 MG;Setubinha;CONECTA CARGO;Não
 MG;Silveirânia;CONECTA CARGO;Não
-MG;Silvianópolis;CONECTA CARGO;Não
+MG;Silvianópolis;MOVEIS CAMILO L;Sim
 MG;Simão Pereira;CONECTA CARGO;Não
 MG;Soledade de Minas;CONECTA CARGO;Não
 MG;Tabuleiro;CONECTA CARGO;Não
@@ -2395,11 +2395,11 @@ MG;Teixeiras;CONECTA CARGO;Não
 MG;Timóteo;CONECTA CARGO;Não
 MG;Tiradentes;CONECTA CARGO;Não
 MG;Tocantins;CONECTA CARGO;Não
-MG;Tocos do Moji;CONECTA CARGO;Não
+MG;Tocos do Moji;MOVEIS CAMILO L;Sim
 MG;Toledo;CONECTA CARGO;Não
 MG;Volta Grande;CONECTA CARGO;Não
 MG;Tupaciguara;AGMX OPORTUNIDA;Sim
-MG;Turvolândia;CONECTA CARGO;Não
+MG;Turvolândia;MOVEIS CAMILO L;Sim
 MG;Umburatiba;CONECTA CARGO;Não
 MG;União de Minas;CONECTA CARGO;Não
 MG;Uruana de Minas;CONECTA CARGO;Não
@@ -4726,7 +4726,7 @@ SP;Adolfo;CONECTA CARGO;Não
 SP;São Carlos;LOGME - TRANSPO;Sim
 SP;Aguaí;MOVEIS CAMILO L;Sim
 SP;Águas da Prata;MOVEIS CAMILO L;Sim
-SP;Águas de Lindóia;BULKY LOG - JUN;Não
+SP;Águas de Lindóia;MOVEIS CAMILO L;Sim
 SP;Águas de Santa Bárbara;CONECTA CARGO;Não
 SP;Águas de São Pedro;BULKY LOG - JUN;Não
 SP;Águas de São Pedro;BULKY LOG - JUN;Não
@@ -4748,7 +4748,7 @@ SP;Mirandópolis;TRINDADE & CUBA;Sim
 SP;Americana;SALDAO CAMPINAS;Sim
 SP;Américo Brasiliense;CONECTA CARGO;Não
 SP;Américo de Campos;CONECTA CARGO;Não
-SP;Amparo;BULKY LOG - JUN;Não
+SP;Amparo;MOVEIS CAMILO L;Sim
 SP;Itariri;CONECTA CARGO;Não
 SP;Analândia;CONECTA CARGO;Não
 SP;Iacri;TRINDADE & CUBA;Sim
@@ -4843,7 +4843,7 @@ SP;Buritizal;CONECTA CARGO;Não
 SP;Cabrália Paulista;LOGME - TRANSPO;Sim
 SP;Cabreúva;SALDAO CAMPINAS;Sim
 SP;Caçapava;SAFARI MONTAGEM;Sim
-SP;Pirassununga;CONECTA CARGO;Não
+SP;Pirassununga;MOVEIS CAMILO L;Sim
 SP;Cachoeira Paulista;CONECTA CARGO;Não
 SP;Cafelândia;TRINDADE & CUBA;Sim
 SP;Caiabu;CONECTA CARGO;Não
@@ -4876,7 +4876,7 @@ SP;Carapicuíba;SAFARI MONTAGEM;Sim
 SP;Elias Fausto;BULKY LOG - JUN;Não
 SP;Cardoso;CONECTA CARGO;Não
 SP;Itajobi;CONECTA CARGO;Não
-SP;Casa Branca;CONECTA CARGO;Não
+SP;Casa Branca;MOVEIS CAMILO L;Sim
 SP;Cássia dos Coqueiros;CONECTA CARGO;Não
 SP;Castilho;TRINDADE & CUBA;Sim
 SP;Catanduva;CONECTA CARGO;Não
@@ -5033,7 +5033,7 @@ SP;Itararé;CONECTA CARGO;Não
 SP;Itatiba;SALDAO CAMPINAS;Sim
 SP;Itatinga;CONECTA CARGO;Não
 SP;Itirapuã;CONECTA CARGO;Não
-SP;Itobi;CONECTA CARGO;Não
+SP;Itobi;MOVEIS CAMILO L;Sim
 SP;Pirapozinho;MEGA MULTI OUTL;Sim
 SP;Itu;SALDAO CAMPINAS;Sim
 SP;Itupeva;SALDAO CAMPINAS;Sim
@@ -5068,7 +5068,7 @@ SP;Lavrinhas;CONECTA CARGO;Não
 SP;Leme;SALDAO CAMPINAS;Sim
 SP;Lençóis Paulista;LOGME - TRANSPO;Sim
 SP;Limeira;SALDAO CAMPINAS;Sim
-SP;Lindóia;CONECTA CARGO;Não
+SP;Lindóia;MOVEIS CAMILO L;Sim
 SP;Lins;TRINDADE & CUBA;Sim
 SP;Lorena;CONECTA CARGO;Não
 SP;Lourdes;CONECTA CARGO;Não
@@ -5179,7 +5179,7 @@ SP;Piedade;SALDAO CAMPINAS;Sim
 SP;Pilar do Sul;CONECTA CARGO;Não
 SP;Pindamonhangaba;CONECTA CARGO;Não
 SP;Pindorama;CONECTA CARGO;Não
-SP;Pinhalzinho;CONECTA CARGO;Não
+SP;Pinhalzinho;MOVEIS CAMILO L;Sim
 SP;Piquerobi;CONECTA CARGO;Não
 SP;Piquete;CONECTA CARGO;Não
 SP;Piracicaba;SALDAO CAMPINAS;Sim
@@ -5200,7 +5200,7 @@ SP;Pontes Gestal;CONECTA CARGO;Não
 SP;Populina;CONECTA CARGO;Não
 SP;Porangaba;CONECTA CARGO;Não
 SP;Porto Feliz;SALDAO CAMPINAS;Sim
-SP;Porto Ferreira;CONECTA CARGO;Não
+SP;Porto Ferreira;MOVEIS CAMILO L;Sim
 SP;Potim;CONECTA CARGO;Não
 SP;Potirendaba;CONECTA CARGO;Não
 SP;Pracinha;CONECTA CARGO;Não
@@ -5255,8 +5255,8 @@ SP;Santa Branca;CONECTA CARGO;Não
 SP;Santa Clara D'Oeste;CONECTA CARGO;Não
 SP;Santa Cruz da Conceição;BULKY LOG - JUN;Não
 SP;Santa Cruz da Esperança;CONECTA CARGO;Não
-SP;Santa Rita do Passa Quatro;CONECTA CARGO;Não
-SP;Santa Cruz das Palmeiras;CONECTA CARGO;Não
+SP;Santa Rita do Passa Quatro;MOVEIS CAMILO L;Sim
+SP;Santa Cruz das Palmeiras;MOVEIS CAMILO L;Sim
 SP;Santa Cruz do Rio Pardo;LOGME - TRANSPO;Sim
 SP;Santa Ernestina;CONECTA CARGO;Não
 SP;Santa Fé do Sul;CONECTA CARGO;Não
@@ -5273,7 +5273,7 @@ SP;Santo Anastácio;MEGA MULTI OUTL;Sim
 SP;Santo André;SAFARI MONTAGEM;Sim
 SP;Santo Antônio da Alegria;CONECTA CARGO;Não
 SP;Santo Antônio de Posse;SALDAO CAMPINAS;Sim
-SP;Santo Antônio do Jardim;CONECTA CARGO;Não
+SP;Santo Antônio do Jardim;MOVEIS CAMILO L;Sim
 SP;Santo Antônio do Pinhal;CONECTA CARGO;Não
 SP;Santo Expedito;CONECTA CARGO;Não
 SP;Santópolis do Aguapeí;TRINDADE & CUBA;Sim
@@ -5312,14 +5312,14 @@ SP;São Vicente;TA NOVINHO;Sim
 SP;Sarutaiá;CONECTA CARGO;Não
 SP;Sebastianópolis do Sul;CONECTA CARGO;Não
 SP;Serra Azul;CONECTA CARGO;Não
-SP;Serra Negra;BULKY LOG - JUN;Não
+SP;Serra Negra;MOVEIS CAMILO L;Sim
 SP;Serrana;CONECTA CARGO;Não
 SP;Sertãozinho;CONECTA CARGO;Não
 SP;Sete Barras;CONECTA CARGO;Não
 SP;Severínia;CONECTA CARGO;Não
 SP;Silveiras;CONECTA CARGO;Não
 SP;Silveiras;CONECTA CARGO;Não
-SP;Socorro;BULKY LOG - JUN;Não
+SP;Socorro;MOVEIS CAMILO L;Sim
 SP;Sorocaba;SALDAO CAMPINAS;Sim
 SP;Sumaré;SALDAO CAMPINAS;Sim
 SP;Suzanápolis;CONECTA CARGO;Não
@@ -5333,7 +5333,7 @@ SP;Taiaçu;CONECTA CARGO;Não
 SP;Taiúva;CONECTA CARGO;Não
 SP;Tambaú;CONECTA CARGO;Não
 SP;Tapiraí;CONECTA CARGO;Não
-SP;Tapiratiba;CONECTA CARGO;Não
+SP;Tapiratiba;MOVEIS CAMILO L;Sim
 SP;Taquaral;CONECTA CARGO;Não
 SP;Taquaritinga;CONECTA CARGO;Não
 SP;Taquarituba;CONECTA CARGO;Não
